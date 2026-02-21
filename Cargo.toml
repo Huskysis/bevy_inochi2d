@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 authors = ["Huskysis"]
 keywords = ["bevy", "inochi2d", "rendering", "2d", "puppet"]
 categories = ["rendering", "game-development", "graphics"]
+exclude = ["assets/", "examples/"]
 
 [dependencies]
 inochi2d-parser = { version = "0.1" }
