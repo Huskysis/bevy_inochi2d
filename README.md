@@ -1,25 +1,25 @@
 ## ✦ Bevy Inochi2d
 
-Renderizador independiente de Inochi2D impulsado por el backend wgpu de Bevy.
+Standalone Inochi2D renderer powered by Bevy's wgpu backend.
 
-> **⚠️ Importante:** Este plugin es un **pipeline de renderizado propio** - **NO** está diseñado para integrarse con el ecosistema de renderizado de Bevy. El sistema de orquestación del render graph de Bevy (fases ordenadas por sort-key, batching, RenderPhase, RenderCommand) entra en conflicto con los requisitos de Inochi2D: orden de dibujado estricto por z-sort, formato de textura no sRGB, stack de composites y masks en un pase secuencial. Esto bypasea esos sistemas por completo en `ViewNode` custom que ejecuta su propia lista de comandos.
+> **⚠️ Important:** This plugin is a **standalone rendering pipeline** - it is **NOT** designed to integrate with Bevy's rendering ecosystem. Bevy's render graph orchestration (sort-key ordered phases, batching, RenderPhase, RenderCommand) conflicts with Inochi2D's requirements: strict z-sort draw order, non-sRGB texture format, composite and mask stack in a sequential pass. This bypasses those systems entirely in a custom `ViewNode` that runs its own command list.
 
-## ✦ Descripción
+## ✦ Description
 
-**bevy_inochi2d** carga archivos puppet .inx / .inp y los renderiza mediante un pipeline wgpu completamente custom dentro del render graph de Bevy. Aprovecha Bevy para ventana, sistema de assets y ECS: pero todos los draw calls, blend states y render targets se gestionan internamente.
+**bevy_inochi2d** loads .inx / .inp puppet files and renders them through a fully custom wgpu pipeline inside Bevy's render graph. It leverages Bevy for windowing, asset system and ECS: but all draw calls, blend states and render targets are managed internally.
 
-## ✦ Características
+## ✦ Features
 
-✦ **Asset loader**: Carga archivos `.inx` / `.inp` vía `AssetServer` de Bevy, parseando el árbol del puppet, meshes, texturas (PNG/TGA), parámetros y animaciones.  
-✦ **Pipeline de renderizado custom**: Un solo `ViewNode` con sus propios vertex/index buffers, MRT (albedo + emissive + bumpmap) y una lista de comandos (`DrawPart`, `BeginComposite`/`EndComposite`, `PushMask`/`PopMask`).  
-✦ **Sistema de máscaras**: Máscaras basadas en stencil con modos Mask y Dodge.  
-✦ **Nodos composite**: Render targets offscreen para composición agrupada con opacidad y tint.  
-✦ **Sistema de parámetros**: Interpolación en grilla 2D (linear/cubic/stepped) para bindings de transform y deformaciones de mesh.  
-✦ **Controlador de animación**: Multi-capa con transición, looping y blend por capa (additive/override).  
-✦ **Física simple**: Simulación de péndulo y spring-pendulum que alimentan params (pelo, accesorios, etc).  
-✦ **Spawn de escenas**: Componente `InxScene` para spawnear un puppet automaticamente.
+✦ **Asset loader**: Loads `.inx` / `.inp` files via Bevy's `AssetServer`, parsing the puppet tree, meshes, textures (PNG/TGA), parameters and animations.  
+✦ **Custom rendering pipeline**: A single `ViewNode` with its own vertex/index buffers, MRT (albedo + emissive + bumpmap) and a command list (`DrawPart`, `BeginComposite`/`EndComposite`, `PushMask`/`PopMask`).  
+✦ **Mask system**: Stencil-based masks with Mask and Dodge modes.  
+✦ **Composite nodes**: Offscreen render targets for grouped composition with opacity and tint.  
+✦ **Parameter system**: 2D grid interpolation (linear/cubic/stepped) for transform bindings and mesh deformations.  
+✦ **Animation controller**: Multi-layer with transition, looping and per-layer blend (additive/override).  
+✦ **Simple physics**: Pendulum and spring-pendulum simulation feeding params (hair, accessories, etc).  
+✦ **Scene spawn**: `InxScene` component to spawn a puppet automatically.
 
-## ✦ Ejemplo de uso
+## ✦ Usage example
 
 ```toml
 [dependencies]
@@ -42,7 +42,7 @@ fn main() {
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn(Camera2d);
 
-    let puppet: Handle<InxPuppet> = asset_server.load("mi_puppet.inx");
+    let puppet: Handle<InxPuppet> = asset_server.load("my_puppet.inx");
     commands.spawn(InxScene {
         puppet,
         transform: Transform::from_scale(Vec3::splat(0.5)),
@@ -51,33 +51,35 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 ```
 
-## ¿Por qué no utilizé el pipeline estándar de Bevy?
+## Why didn't I use Bevy's standard pipeline?
 
-Los puppets de Inochi2D requieren un **orden de dibujado estricto** definido por el árbol del puppet(es decir, los nodos que lo componen), se puede lograr pero en el render no alcanza el orden, se requiere varios `RenderPipeline` para cada nodo con su propio `RenderPass`(en bevy seria `TrackedRenderPass`), para mi es muy enredado, opte por un sistema monolítico, por ahora. Añadiendo, el sistema `RenderPhase` de Bevy está diseñado para batching por sort-key y paralelismo, lo que rompe el contrato secuencial para utilizar estructuras heterogéneas. Integrarse con `bevy_sprite` o el sistema de fases de `bevy_render` implicaría pelear contra el ecosistema en cada paso, así que me decidí usar su propio `ViewNode` como una lista de comandos directos.
+Inochi2D puppets require a **strict draw order** defined by the puppet tree (that is, the nodes that compose it), it can be achieved but the render does not reach the order, several `RenderPipeline` are required for each node with its own `RenderPass` (in bevy it would be `TrackedRenderPass`), for me it is too tangled, I opted for a monolithic system, for now. Adding to it, Bevy's `RenderPhase` system is designed for sort-key batching and parallelism, which breaks the sequential contract needed for heterogeneous structures. Integrating with `bevy_sprite` or `bevy_render`'s phase system would mean fighting the ecosystem at every step, so I decided to use its own `ViewNode` as a direct command list.
 
-**Qué implica en la práctica:**
+**What this implies in practice:**
 
-- Los puppets Inochi2D se renderizan correctamente con cumplimiento completo de la spec.
-- Los sprites/meshes estándar de Bevy **no** se intercalan ni hacen depth-sort con las partes del puppet.
-- El puppet se renderiza como una capa única en el render graph de Bevy (después de `Node2d::MainPass`).
+- Inochi2D puppets render correctly with full spec compliance.
+- Bevy's standard sprites/meshes **do not** interleave or depth-sort with puppet parts.
+- The puppet renders as a single layer in Bevy's render graph (after `Node2d::MainPass`).
 
-## Compatibilidad
+## Compatibility
 
 | bevy_inochi2d | Bevy |
 | ------------- | ---- |
 | 0.1           | 0.17 |
 
-## ✦ Dependencias
+**Note:** For Bevy 0.18, I'm currently exploring and experimenting with alternatives and strategies to integrate this plugin into the ecosystem.
 
-- [`inochi2d-parser`](https://github.com/Huskysis/inochi2d-parser): Parser IR del formato INX/INP.
-- `bytemuck`: Conversión de struct a bytes(o buffer GPU).
-- `bevy`: Ventana, sistema de assets, ECS, acceso fácil a wgpu.
-- `bevy_image`: Decodificación de texturas PNG/TGA.
+## ✦ Dependencies
 
-## ✦ Por hacer (TODO)
+- [`inochi2d-parser`](https://github.com/Huskysis/inochi2d-parser): IR parser for the INX/INP format.
+- `bytemuck`: Struct to bytes conversion (or GPU buffer).
+- `bevy`: Windowing, asset system, ECS, easy access to wgpu.
+- `bevy_image`: PNG/TGA texture decoding.
 
-- [ ] Refactorizar y explorar alternativas a pipeline.rs para poder utilizar el ecosistema de bevy adyacente.
+## ✦ TODO
 
-## ✦ Activo de Ejemplo
+- [ ] Refactor and explore alternatives to pipeline.rs to make use of the adjacent bevy ecosystem.
 
-El Puppet de ejemplo (Arch Chan.inx) lo obtuve del repositorio [arch-chan](https://github.com/Speykious/arch-chan) bajo la licencia CC0 1.0 Universal.
+## ✦ Example Asset
+
+The example Puppet (Arch Chan.inx) was obtained from the [arch-chan](https://github.com/Speykious/arch-chan) repository under the CC0 1.0 Universal license.
