@@ -26,6 +26,159 @@ pub enum InrError {
     Json(#[from] serde_json::Error),
     #[error("buffer view {0} out of range")]
     BadView(u32),
+    #[error("texture {0}: unsupported pixel format")]
+    UnsupportedTexture(usize),
+}
+
+// --- string enums (unknown values fall back to spec defaults) --------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrNodeKind {
+    Part,
+    Composite,
+    Mask,
+    #[serde(rename = "meshgroup")]
+    MeshGroup,
+    #[serde(rename = "simplephysics")]
+    SimplePhysics,
+    Camera,
+    #[default]
+    #[serde(other)]
+    Node,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrBlendMode {
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    LinearDodge,
+    Add,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Subtract,
+    Difference,
+    Exclusion,
+    Inverse,
+    DestinationIn,
+    ClipToLower,
+    SliceFromLower,
+    #[default]
+    #[serde(other)]
+    Normal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrMaskMode {
+    Dodge,
+    #[default]
+    #[serde(other)]
+    Mask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrPhysicsModel {
+    SpringPendulum,
+    #[default]
+    #[serde(other)]
+    Pendulum,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrMapMode {
+    Xy,
+    LengthAngle,
+    Yx,
+    #[default]
+    #[serde(other)]
+    AngleLength,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrMergeMode {
+    Multiplicative,
+    Override,
+    Forced,
+    #[default]
+    #[serde(other)]
+    Additive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrInterpolation {
+    Stepped,
+    Nearest,
+    Cubic,
+    #[default]
+    #[serde(other)]
+    Linear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrBindingKind {
+    #[default]
+    Scalar,
+    Deform,
+    /// Unknown kinds must not be misread as scalar data.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrBindingTarget {
+    #[serde(rename = "transform.t.x")]
+    TranslateX,
+    #[serde(rename = "transform.t.y")]
+    TranslateY,
+    #[serde(rename = "transform.t.z")]
+    TranslateZ,
+    #[serde(rename = "transform.r.x")]
+    RotateX,
+    #[serde(rename = "transform.r.y")]
+    RotateY,
+    #[serde(rename = "transform.r.z")]
+    RotateZ,
+    #[serde(rename = "transform.s.x")]
+    ScaleX,
+    #[serde(rename = "transform.s.y")]
+    ScaleY,
+    Deform,
+    Opacity,
+    #[default]
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrTextureFormat {
+    #[default]
+    Rgba8,
+    Bc7,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InrColorSpace {
+    Linear,
+    #[default]
+    #[serde(other)]
+    Srgb,
 }
 
 /// Parsed container: JSON document + binary blob.
@@ -148,11 +301,11 @@ pub struct BufferView {
 pub struct TextureDesc {
     pub width: u32,
     pub height: u32,
-    /// Pixel layout, currently always "rgba8".
-    pub format: String,
-    /// "srgb" | "linear" — encoding of the RGB channels.
+    /// Pixel layout, currently always `Rgba8`.
+    pub format: InrTextureFormat,
+    /// Encoding of the RGB channels.
     #[serde(default)]
-    pub color_space: String,
+    pub color_space: InrColorSpace,
     /// RGB premultiplied by alpha (in `color_space`).
     #[serde(default)]
     pub premultiplied: bool,
@@ -166,8 +319,7 @@ pub struct InrNode {
     /// Index into `nodes`; absent on the root.
     #[serde(default)]
     pub parent: Option<u32>,
-    /// "node" | "part" | "composite" | "mask" | "meshgroup" | "simplephysics" | "camera"
-    pub kind: String,
+    pub kind: InrNodeKind,
     pub enabled: bool,
     pub zsort: f32,
     #[serde(default)]
@@ -201,7 +353,7 @@ pub struct InrMesh {
 pub struct InrPart {
     /// Texture indices [albedo, emissive, bump]; -1 = none.
     pub textures: [i32; 3],
-    pub blend_mode: String,
+    pub blend_mode: InrBlendMode,
     pub tint: [f32; 3],
     pub screen_tint: [f32; 3],
     pub opacity: f32,
@@ -214,7 +366,7 @@ pub struct InrPart {
 
 #[derive(Debug, Deserialize)]
 pub struct InrComposite {
-    pub blend_mode: String,
+    pub blend_mode: InrBlendMode,
     pub tint: [f32; 3],
     pub screen_tint: [f32; 3],
     pub opacity: f32,
@@ -227,18 +379,15 @@ pub struct InrComposite {
 pub struct InrMask {
     /// Index into `nodes`.
     pub node: u32,
-    /// "mask" | "dodge"
-    pub mode: String,
+    pub mode: InrMaskMode,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct InrPhysics {
     /// Index into `params`; -1 = unresolved.
     pub param: i32,
-    /// "pendulum" | "spring_pendulum"
-    pub model: String,
-    /// "angle_length" | "xy" | "length_angle" | "yx"
-    pub map_mode: String,
+    pub model: InrPhysicsModel,
+    pub map_mode: InrMapMode,
     pub gravity: f32,
     pub length: f32,
     pub frequency: f32,
@@ -258,8 +407,7 @@ pub struct InrParam {
     pub max: [f32; 2],
     pub defaults: [f32; 2],
     pub axis_points: [Vec<f32>; 2],
-    /// "additive" | "multiplicative" | "override" | "forced"
-    pub merge_mode: String,
+    pub merge_mode: InrMergeMode,
     #[serde(default)]
     pub bindings: Vec<InrBinding>,
 }
@@ -268,16 +416,13 @@ pub struct InrParam {
 pub struct InrBinding {
     /// Index into `nodes`.
     pub node: u32,
-    /// Inochi2D property name: "transform.t.x" … "deform" | "opacity".
-    pub target: String,
-    /// "linear" | "stepped" | "nearest" | "cubic"
-    pub interpolation: String,
+    pub target: InrBindingTarget,
+    pub interpolation: InrInterpolation,
     pub x_count: u32,
     pub y_count: u32,
     /// Row-major [x][y] authored flags, flattened.
     pub is_set: Vec<bool>,
-    /// "scalar" | "deform"
-    pub kind: String,
+    pub kind: InrBindingKind,
     pub view: u32,
 }
 
@@ -308,8 +453,8 @@ pub struct InrLane {
     pub param: i32,
     /// 0 = X, 1 = Y.
     pub target: u8,
-    pub interpolation: String,
-    pub merge_mode: String,
+    pub interpolation: InrInterpolation,
+    pub merge_mode: InrMergeMode,
     /// [frame, value, tension] per keyframe.
     pub keyframes: Vec<[f32; 3]>,
 }

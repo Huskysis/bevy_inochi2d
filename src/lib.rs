@@ -217,7 +217,8 @@ pub(crate) fn sync_props(
     mut commands: Commands,
     changed: Query<(Entity, &InxProp), Or<(Added<InxProp>, Changed<InxProp>)>>,
     added: Query<(), Added<InxProp>>,
-    reparented: Query<Entity, (With<InxProp>, Changed<ChildOf>)>,
+    // Reparenting or zsort changes require a re-sort of the command list.
+    reparented: Query<Entity, (With<InxProp>, Or<(Changed<ChildOf>, Changed<InxZSort>)>)>,
     mut removed: RemovedComponents<InxProp>,
     parents: Query<&ChildOf>,
     mut versions: Query<&mut InxStructureVersion>,

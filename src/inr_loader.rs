@@ -60,6 +60,9 @@ fn convert(model: &InrModel, ctx: &mut LoadContext<'_>) -> Result<InxPuppet, inr
     // sRGB space (authoring-faithful), matching the render pipeline.
     let mut textures = Vec::with_capacity(doc.textures.len());
     for (i, t) in doc.textures.iter().enumerate() {
+        if t.format != inr::InrTextureFormat::Rgba8 {
+            return Err(inr::InrError::UnsupportedTexture(i));
+        }
         let data = model.view_bytes(t.view)?.to_vec();
         let mut image = Image::new(
             Extent3d {
@@ -167,14 +170,14 @@ fn build_node(
         child_nodes.push(build_node(model, c, children, images, nodes, named_nodes)?);
     }
 
-    let node_type = match n.kind.as_str() {
-        "part" => InxNodeType::Part,
-        "composite" => InxNodeType::Composite,
-        "mask" => InxNodeType::Mask,
-        "meshgroup" => InxNodeType::MeshGroup,
-        "camera" => InxNodeType::Camera,
-        "simplephysics" => InxNodeType::SimplePhysics,
-        _ => InxNodeType::Generic,
+    let node_type = match n.kind {
+        inr::InrNodeKind::Part => InxNodeType::Part,
+        inr::InrNodeKind::Composite => InxNodeType::Composite,
+        inr::InrNodeKind::Mask => InxNodeType::Mask,
+        inr::InrNodeKind::MeshGroup => InxNodeType::MeshGroup,
+        inr::InrNodeKind::Camera => InxNodeType::Camera,
+        inr::InrNodeKind::SimplePhysics => InxNodeType::SimplePhysics,
+        inr::InrNodeKind::Node => InxNodeType::Generic,
     };
 
     let mesh = n.mesh.as_ref().map(|m| convert_mesh(model, m)).transpose()?;
@@ -191,7 +194,7 @@ fn build_node(
             opacity: part.opacity,
             emissive_strength: part.emission_strength,
             mask_threshold: part.mask_threshold,
-            blend_mode: blend_mode(&part.blend_mode),
+            blend_mode: part.blend_mode.into(),
             masks: convert_masks(doc, &part.masks),
         })
     } else if let Some(comp) = &n.composite {
@@ -206,7 +209,7 @@ fn build_node(
             opacity: comp.opacity,
             emissive_strength: 0.0,
             mask_threshold: comp.mask_threshold,
-            blend_mode: blend_mode(&comp.blend_mode),
+            blend_mode: comp.blend_mode.into(),
             masks: convert_masks(doc, &comp.masks),
         })
     } else {
@@ -220,15 +223,15 @@ fn build_node(
             .ok()
             .and_then(|i: usize| doc.params.get(i))
             .map_or(u32::MAX, |param| param.uuid),
-        model: match p.model.as_str() {
-            "spring_pendulum" => PhysicsModel::SpringPendulum,
-            _ => PhysicsModel::Pendulum,
+        model: match p.model {
+            inr::InrPhysicsModel::SpringPendulum => PhysicsModel::SpringPendulum,
+            inr::InrPhysicsModel::Pendulum => PhysicsModel::Pendulum,
         },
-        map_mode: match p.map_mode.as_str() {
-            "xy" => PhysicsMapMode::XY,
-            "length_angle" => PhysicsMapMode::LengthAngle,
-            "yx" => PhysicsMapMode::YX,
-            _ => PhysicsMapMode::AngleLength,
+        map_mode: match p.map_mode {
+            inr::InrMapMode::Xy => PhysicsMapMode::XY,
+            inr::InrMapMode::LengthAngle => PhysicsMapMode::LengthAngle,
+            inr::InrMapMode::Yx => PhysicsMapMode::YX,
+            inr::InrMapMode::AngleLength => PhysicsMapMode::AngleLength,
         },
         gravity: p.gravity,
         length: p.length,
@@ -293,9 +296,9 @@ fn convert_masks(doc: &inr::InrDoc, masks: &[inr::InrMask]) -> Vec<InxMask> {
             let source = doc.nodes.get(m.node as usize)?;
             Some(InxMask {
                 source_uuid: source.uuid,
-                mode: match m.mode.as_str() {
-                    "dodge" => InxMaskMode::Dodge,
-                    _ => InxMaskMode::Mask,
+                mode: match m.mode {
+                    inr::InrMaskMode::Dodge => InxMaskMode::Dodge,
+                    inr::InrMaskMode::Mask => InxMaskMode::Mask,
                 },
             })
         })
@@ -312,8 +315,8 @@ fn convert_param(model: &InrModel, p: &inr::InrParam) -> Result<InxParam, inr::I
         let x = (b.x_count as usize).max(1);
         let y = (b.y_count as usize).max(1);
 
-        let values = match b.kind.as_str() {
-            "scalar" => {
+        let values = match b.kind {
+            inr::InrBindingKind::Scalar => {
                 let data = model.view_f32(b.view)?;
                 let values_per_frame = (data.len() / x).max(1);
                 InxBindingValues::Transform(InxFlatTransform {
@@ -322,7 +325,7 @@ fn convert_param(model: &InrModel, p: &inr::InrParam) -> Result<InxParam, inr::I
                     values_per_frame,
                 })
             }
-            "deform" => {
+            inr::InrBindingKind::Deform => {
                 let flat = model.view_f32(b.view)?;
                 let data: Vec<[f32; 2]> =
                     flat.chunks_exact(2).map(|c| [c[0], c[1]]).collect();
@@ -333,7 +336,7 @@ fn convert_param(model: &InrModel, p: &inr::InrParam) -> Result<InxParam, inr::I
                     vertices_per_frame,
                 })
             }
-            _ => InxBindingValues::Other,
+            inr::InrBindingKind::Other => InxBindingValues::Other,
         };
 
         // Flattened row-major [x][y] back to per-row vectors.
@@ -342,8 +345,8 @@ fn convert_param(model: &InrModel, p: &inr::InrParam) -> Result<InxParam, inr::I
 
         bindings.push(InxBinding {
             node_uuid: node.uuid,
-            param_name: param_name(&b.target),
-            interpolation: interpolation(&b.interpolation),
+            param_name: b.target.into(),
+            interpolation: b.interpolation.into(),
             values,
             is_set,
         });
@@ -357,7 +360,7 @@ fn convert_param(model: &InrModel, p: &inr::InrParam) -> Result<InxParam, inr::I
         max: p.max,
         defaults: p.defaults,
         axis_points: p.axis_points.clone(),
-        merge_mode: merge_mode(&p.merge_mode),
+        merge_mode: p.merge_mode.into(),
         bindings,
     })
 }
@@ -371,8 +374,8 @@ fn convert_animation(doc: &inr::InrDoc, a: &inr::InrAnimation) -> InxAnimation {
             Some(InxAnimationLane {
                 param_uuid: param.uuid,
                 target: l.target,
-                interpolation: interpolation(&l.interpolation),
-                merge_mode: merge_mode(&l.merge_mode),
+                interpolation: l.interpolation.into(),
+                merge_mode: l.merge_mode.into(),
                 keyframes: l
                     .keyframes
                     .iter()
@@ -394,61 +397,73 @@ fn convert_animation(doc: &inr::InrDoc, a: &inr::InrAnimation) -> InxAnimation {
     }
 }
 
-// --- enum parsing (unknown values fall back to defaults, per spec) ---------
+// --- INR enum -> runtime enum mappings --------------------------------------
 
-fn blend_mode(s: &str) -> BlendMode {
-    match s {
-        "multiply" => BlendMode::Multiply,
-        "screen" => BlendMode::Screen,
-        "overlay" => BlendMode::Overlay,
-        "darken" => BlendMode::Darken,
-        "lighten" => BlendMode::Lighten,
-        "color_dodge" => BlendMode::ColorDodge,
-        "linear_dodge" => BlendMode::LinearDodge,
-        "add" => BlendMode::Add,
-        "color_burn" => BlendMode::ColorBurn,
-        "hard_light" => BlendMode::HardLight,
-        "soft_light" => BlendMode::SoftLight,
-        "subtract" => BlendMode::Subtract,
-        "difference" => BlendMode::Difference,
-        "exclusion" => BlendMode::Exclusion,
-        "inverse" => BlendMode::Inverse,
-        "destination_in" => BlendMode::DestinationIn,
-        "clip_to_lower" => BlendMode::ClipToLower,
-        "slice_from_lower" => BlendMode::SliceFromLower,
-        _ => BlendMode::Normal,
+impl From<inr::InrBlendMode> for BlendMode {
+    fn from(b: inr::InrBlendMode) -> Self {
+        use inr::InrBlendMode as B;
+        match b {
+            B::Normal => Self::Normal,
+            B::Multiply => Self::Multiply,
+            B::Screen => Self::Screen,
+            B::Overlay => Self::Overlay,
+            B::Darken => Self::Darken,
+            B::Lighten => Self::Lighten,
+            B::ColorDodge => Self::ColorDodge,
+            B::LinearDodge => Self::LinearDodge,
+            B::Add => Self::Add,
+            B::ColorBurn => Self::ColorBurn,
+            B::HardLight => Self::HardLight,
+            B::SoftLight => Self::SoftLight,
+            B::Subtract => Self::Subtract,
+            B::Difference => Self::Difference,
+            B::Exclusion => Self::Exclusion,
+            B::Inverse => Self::Inverse,
+            B::DestinationIn => Self::DestinationIn,
+            B::ClipToLower => Self::ClipToLower,
+            B::SliceFromLower => Self::SliceFromLower,
+        }
     }
 }
 
-fn merge_mode(s: &str) -> InxMergeMode {
-    match s {
-        "multiplicative" => InxMergeMode::Multiply,
-        "override" => InxMergeMode::Override,
-        "forced" => InxMergeMode::Forced,
-        _ => InxMergeMode::Additive,
+impl From<inr::InrMergeMode> for InxMergeMode {
+    fn from(m: inr::InrMergeMode) -> Self {
+        use inr::InrMergeMode as M;
+        match m {
+            M::Additive => Self::Additive,
+            M::Multiplicative => Self::Multiply,
+            M::Override => Self::Override,
+            M::Forced => Self::Forced,
+        }
     }
 }
 
-fn interpolation(s: &str) -> InxInterpolation {
-    match s {
-        "stepped" | "nearest" => InxInterpolation::Stepped,
-        "cubic" => InxInterpolation::Cubic,
-        _ => InxInterpolation::Linear,
+impl From<inr::InrInterpolation> for InxInterpolation {
+    fn from(i: inr::InrInterpolation) -> Self {
+        use inr::InrInterpolation as I;
+        match i {
+            I::Linear => Self::Linear,
+            I::Stepped | I::Nearest => Self::Stepped,
+            I::Cubic => Self::Cubic,
+        }
     }
 }
 
-fn param_name(s: &str) -> InxParamName {
-    match s {
-        "transform.t.x" => InxParamName::TransformTX,
-        "transform.t.y" => InxParamName::TransformTY,
-        "transform.t.z" => InxParamName::TransformTZ,
-        "transform.s.x" => InxParamName::TransformSX,
-        "transform.s.y" => InxParamName::TransformSY,
-        "transform.r.x" => InxParamName::TransformRX,
-        "transform.r.y" => InxParamName::TransformRY,
-        "transform.r.z" => InxParamName::TransformRZ,
-        "deform" => InxParamName::Deform,
-        "opacity" => InxParamName::Opacity,
-        _ => InxParamName::Other,
+impl From<inr::InrBindingTarget> for InxParamName {
+    fn from(t: inr::InrBindingTarget) -> Self {
+        use inr::InrBindingTarget as T;
+        match t {
+            T::TranslateX => Self::TransformTX,
+            T::TranslateY => Self::TransformTY,
+            T::TranslateZ => Self::TransformTZ,
+            T::ScaleX => Self::TransformSX,
+            T::ScaleY => Self::TransformSY,
+            T::RotateX => Self::TransformRX,
+            T::RotateY => Self::TransformRY,
+            T::RotateZ => Self::TransformRZ,
+            T::Deform => Self::Deform,
+            T::Opacity => Self::Opacity,
+            T::Other => Self::Other,
+        }
     }
 }
