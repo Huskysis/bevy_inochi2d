@@ -38,7 +38,8 @@ bevy_inochi2d = { version = "0.2", features = ["inx"] }
 ✦ **Parameter system**: 2D grid interpolation (linear/cubic/stepped) for transform bindings and mesh deformations.  
 ✦ **Animation controller**: Multi-layer with transition, looping and per-layer blend (additive/override).  
 ✦ **Simple physics**: Pendulum and spring-pendulum simulation feeding params (hair, accessories, etc).  
-✦ **Scene spawn**: `InxScene` component to spawn a puppet automatically.
+✦ **Scene spawn**: `InxScene` component to spawn a puppet automatically.  
+✦ **Props (pseudo-sprites)**: `InxProp` attaches external textured quads to puppet nodes, rendered *inside* the pipeline with correct z-ordering between parts (e.g. an item in the hand).
 
 ## ✦ Usage example
 
@@ -100,9 +101,35 @@ Inochi2D puppets require a **strict draw order** defined by the puppet tree (tha
   - [`inochi2d-parser`](https://github.com/Huskysis/inochi2d-parser): IR parser for the INX/INP format.
   - `bevy_image`: PNG/TGA texture decoding.
 
+## ✦ Props: attaching external content
+
+A puppet is not a closed quad: parent an `InxProp` to any puppet node and it renders
+inside the custom pipeline, z-sorted between puppet parts. Props are regular ECS
+entities (transforms, collisions, queries all work); only the drawing goes through the
+plugin's ViewNode — a plain Bevy `Sprite` still renders above/below the whole puppet.
+
+```rust
+// find a node entity (e.g. by Name), then:
+commands.entity(hand).with_child((
+    InxProp {
+        texture: asset_server.load("sword.png"),
+        size: Vec2::new(64.0, 200.0),
+        ..Default::default()
+    },
+    InxZSort(-0.05), // lower zsort = in front of the hand
+));
+```
+
+See `examples/prop.rs` for a runnable demo (attach/remove at runtime).
+
 ## ✦ TODO
 
-- [ ] Refactor and explore alternatives to pipeline.rs to make use of the adjacent bevy ecosystem.
+- [ ] **Long-term direction**: migrate rendering to `Mesh2d`/`Material2d` (the
+      bevy_spine model) so Bevy sprites interleave natively with puppet parts. This
+      requires reworking masks as CPU polygon clipping, emulating composites and the
+      extended blend modes, and evolving the INR format to match the Mesh2d-friendly
+      layout. Definitive ecosystem integration; planned after `InxProp` proves the
+      interaction model.
 
 ## ✦ Example Asset
 

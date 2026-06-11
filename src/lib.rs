@@ -24,7 +24,7 @@ use bevy::{
 pub mod prelude {
     pub use crate::{
         BlendMode, InxAnimationController, InxMaskMode, InxMaterial, InxNode, InxNodeType,
-        InxParam, InxPuppet, InxPuppetRoot, InxScene, InxUUID, MeshWrap,
+        InxParam, InxProp, InxPuppet, InxPuppetRoot, InxScene, InxUUID, MeshWrap,
         plugin::{Inochi2dPlugin, InxAnimationPlugin},
     };
     #[cfg(feature = "inx")]
@@ -159,6 +159,132 @@ pub struct InxMaterial {
 
 #[derive(Debug, Clone, Copy, Default, Component, PartialEq, Reflect)]
 pub struct InxZSort(pub f32);
+
+/// Pseudo-sprite: external content rendered *inside* the puppet pipeline.
+///
+/// Spawn it as a child of any puppet node entity and it draws as a textured
+/// quad participating in the global zsort (e.g. an item in the hand, between
+/// the arm and the hair). The entity is regular ECS — transforms, queries,
+/// collisions all work; only the drawing goes through the plugin's ViewNode.
+///
+/// ```ignore
+/// // find the hand node by name, then:
+/// commands.entity(hand).with_child((
+///     InxProp { texture: asset_server.load("sword.png"), size: Vec2::new(64.0, 200.0), ..default() },
+///     InxZSort(0.01), // slightly in front of the hand
+/// ));
+/// ```
+#[derive(Component, Clone, Debug, Reflect)]
+#[require(InxUUID, InxZSort, InxNodeType = InxNodeType::Part, Transform, Visibility)]
+pub struct InxProp {
+    pub texture: Handle<Image>,
+    /// Quad size in puppet units.
+    pub size: Vec2,
+    pub blend_mode: BlendMode,
+    pub opacity: f32,
+    pub tint: Vec3,
+}
+
+impl Default for InxProp {
+    fn default() -> Self {
+        Self {
+            texture: Handle::default(),
+            size: Vec2::splat(100.0),
+            blend_mode: BlendMode::Normal,
+            opacity: 1.0,
+            tint: Vec3::ONE,
+        }
+    }
+}
+
+/// Bumped on the puppet root whenever the node structure changes (prop
+/// added/removed/reparented). The render world rebuilds its command list
+/// when the stored version no longer matches.
+#[derive(Debug, Clone, Copy, Default, Component, Reflect)]
+pub struct InxStructureVersion(pub u32);
+
+static NEXT_PROP_UUID: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0x8000_0000);
+
+fn root_of(mut entity: Entity, parents: &Query<&ChildOf>) -> Entity {
+    while let Ok(child_of) = parents.get(entity) {
+        entity = child_of.parent();
+    }
+    entity
+}
+
+pub(crate) fn sync_props(
+    mut commands: Commands,
+    changed: Query<(Entity, &InxProp), Or<(Added<InxProp>, Changed<InxProp>)>>,
+    added: Query<(), Added<InxProp>>,
+    reparented: Query<Entity, (With<InxProp>, Changed<ChildOf>)>,
+    mut removed: RemovedComponents<InxProp>,
+    parents: Query<&ChildOf>,
+    mut versions: Query<&mut InxStructureVersion>,
+    roots: Query<Entity, (With<InxUUID>, Without<ChildOf>)>,
+) {
+    let mut dirty_roots: Vec<Entity> = Vec::new();
+    let mut dirty_all = false;
+
+    for (entity, prop) in changed.iter() {
+        let hw = prop.size.x * 0.5;
+        let hh = prop.size.y * 0.5;
+        let mesh = InxMesh {
+            vertex_buffer: vec![[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]],
+            uv_buffer: vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+            index_buffer: vec![0, 1, 2, 0, 2, 3],
+            origin: Vec2::ZERO,
+        };
+        let mut e = commands.entity(entity);
+        e.insert(InxMaterial {
+            mesh: Some(Arc::new(mesh)),
+            texture_albedo: Some(prop.texture.clone()),
+            texture_emissive: None,
+            texture_bumpmap: None,
+            textures: [0; 3],
+            tint: prop.tint,
+            screen_tint: Vec3::ZERO,
+            opacity: prop.opacity,
+            emissive_strength: 0.0,
+            mask_threshold: 0.5,
+            blend_mode: prop.blend_mode,
+            masks: Vec::new(),
+        });
+        if added.contains(entity) {
+            e.insert(InxUUID(
+                NEXT_PROP_UUID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ));
+        }
+        dirty_roots.push(root_of(entity, &parents));
+    }
+
+    for entity in reparented.iter() {
+        dirty_roots.push(root_of(entity, &parents));
+    }
+
+    for entity in removed.read() {
+        if parents.get(entity).is_ok() {
+            dirty_roots.push(root_of(entity, &parents));
+        } else {
+            // Entity despawned — can no longer find its root.
+            dirty_all = true;
+        }
+    }
+
+    if dirty_all {
+        dirty_roots.extend(roots.iter());
+    }
+
+    dirty_roots.sort_unstable();
+    dirty_roots.dedup();
+    for root in dirty_roots {
+        if let Ok(mut v) = versions.get_mut(root) {
+            v.0 = v.0.wrapping_add(1);
+        } else {
+            commands.entity(root).insert(InxStructureVersion(1));
+        }
+    }
+}
 
 // Sera utilizado el del parser, no este, no es necesario duplicar lo mismo
 // Por ahora, se utilizara para debug

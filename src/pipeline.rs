@@ -22,7 +22,10 @@ use bevy::{
     shader::load_shader_library,
 };
 
-use crate::{BlendMode, InxDeform, InxMaskMode, InxMaterial, InxNodeType, InxUUID, InxZSort};
+use crate::{
+    BlendMode, InxDeform, InxMaskMode, InxMaterial, InxNodeType, InxStructureVersion, InxUUID,
+    InxZSort,
+};
 
 /// Mapa estatico: para cada comando que tiene datos dinamicos,
 /// guarda que Entity del main world leer para actualizar.
@@ -64,6 +67,9 @@ pub struct InxData {
     pub indices: Vec<u32>,
     pub commands: Vec<RenderOrder>,
     pub textures: Vec<AssetId<Image>>,
+    /// Copy of the root's `InxStructureVersion` at build time; mismatch
+    /// triggers a full command-list rebuild (props added/removed).
+    pub structure_version: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -201,7 +207,12 @@ pub fn extract_inx_node(
 
     // Main world (Extract<>)
     roots: Extract<Query<Entity, (With<InxUUID>, Without<ChildOf>)>>,
-    roots_render: Extract<Query<(Entity, &RenderEntity), (With<InxUUID>, Without<ChildOf>)>>,
+    roots_render: Extract<
+        Query<
+            (Entity, &RenderEntity, Option<&InxStructureVersion>),
+            (With<InxUUID>, Without<ChildOf>),
+        >,
+    >,
 
     // Full query - solo se usa en slow path
     nodes_full: Extract<
@@ -232,13 +243,23 @@ pub fn extract_inx_node(
 
     // Render world (sin Extract)
     mut existing_data: Query<&mut InxData>,
+    mut tex_bind: ResMut<InxTexturesBindGroup>,
 ) {
     // Primero: detectar si ALGUN puppet necesita slow path
+    // (sin InxData, o la estructura cambio — props añadidos/quitados)
     let mut needs_slow_path = false;
-    for (_entity, render_entity) in roots_render.iter() {
-        if existing_data.get(render_entity.id()).is_err() {
-            needs_slow_path = true;
-            break;
+    for (_entity, render_entity, version) in roots_render.iter() {
+        match existing_data.get(render_entity.id()) {
+            Err(_) => {
+                needs_slow_path = true;
+                break;
+            }
+            Ok(data) => {
+                if data.structure_version != version.map(|v| v.0).unwrap_or(0) {
+                    needs_slow_path = true;
+                    break;
+                }
+            }
         }
     }
 
@@ -269,21 +290,27 @@ pub fn extract_inx_node(
             );
         }
 
-        for (entity, render_entity) in roots_render.iter() {
+        for (entity, render_entity, version) in roots_render.iter() {
             let Ok(root) = roots.get(entity) else {
                 continue;
             };
 
-            let uuid_map = build_uuid_map_for_root(root, &node_map);
+            let current_version = version.map(|v| v.0).unwrap_or(0);
+            let up_to_date = existing_data
+                .get(render_entity.id())
+                .is_ok_and(|data| data.structure_version == current_version);
 
-            if existing_data.get(render_entity.id()).is_ok() {
-                // Este puppet ya existe
+            if up_to_date {
                 if let Ok(mut data) = existing_data.get_mut(render_entity.id()) {
                     update_dynamic_data(&mut data, &node_map);
                 }
             } else {
-                // Nuevo puppet - full build
-                let mut data = InxData::default();
+                // Nuevo puppet o estructura cambiada - full (re)build
+                let uuid_map = build_uuid_map_for_root(root, &node_map);
+                let mut data = InxData {
+                    structure_version: current_version,
+                    ..Default::default()
+                };
                 let mut tex_lookup: HashMap<AssetId<Image>, u32> = HashMap::new();
 
                 let mut sortable =
@@ -291,7 +318,13 @@ pub fn extract_inx_node(
                 sort_nodes(&mut sortable);
                 flatten_to_commands(sortable, &mut data.commands);
 
-                commands.entity(render_entity.id()).insert(data);
+                // Invalidar caches por-entity: GPU buffers y mapa de texturas
+                // se reconstruyen en prepare a partir del nuevo InxData.
+                tex_bind.entity_maps.remove(&render_entity.id());
+                commands
+                    .entity(render_entity.id())
+                    .remove::<PuppetGpuBuffers>()
+                    .insert(data);
             }
         }
     } else {
@@ -317,7 +350,7 @@ pub fn extract_inx_node(
             );
         }
 
-        for (_entity, render_entity) in roots_render.iter() {
+        for (_entity, render_entity, _version) in roots_render.iter() {
             if let Ok(mut data) = existing_data.get_mut(render_entity.id()) {
                 update_dynamic_data_light(&mut data, &light_map);
             }
