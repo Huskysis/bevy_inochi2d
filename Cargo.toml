@@ -1,6 +1,6 @@
 [package]
 name = "bevy_inochi2d"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "Renderizador independiente de Inochi2D impulsado por el backend wgpu de Bevy"
 repository = "https://github.com/Huskysis/bevy_inochi2d"
