@@ -26,7 +26,7 @@ instead of PNG) in exchange for much faster, decode-free loading.
 
 ```toml
 # INX/INP support is opt-in:
-bevy_inochi2d = { version = "0.2", features = ["inx"] }
+bevy_inochi2d = { version = "0.3", features = ["inx"] }
 ```
 
 ## ✦ Features
@@ -45,7 +45,7 @@ bevy_inochi2d = { version = "0.2", features = ["inx"] }
 
 ```toml
 [dependencies]
-bevy_inochi2d = "0.2"
+bevy_inochi2d = "0.3"
 ```
 
 ```rust
@@ -87,10 +87,11 @@ Inochi2D puppets require a **strict draw order** defined by the puppet tree (tha
 
 | bevy_inochi2d | Bevy |
 | ------------- | ---- |
+| 0.3           | 0.18 |
 | 0.2           | 0.17 |
 | 0.1           | 0.17 |
 
-**Note:** For Bevy 0.18, I'm currently exploring and experimenting with alternatives and strategies to integrate this plugin into the ecosystem.
+**Note:** Since Bevy 0.18 the `2d` feature collection officially supports bringing your own 2D renderer, which is exactly what this plugin does.
 
 ## ✦ Dependencies
 

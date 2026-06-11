@@ -1214,7 +1214,7 @@ impl FromWorld for InxPipeline {
         let assets = world.resource::<AssetServer>();
         let pipeline_cache = world.resource::<PipelineCache>();
 
-        let view_layout = render_device.create_bind_group_layout(
+        let view_layout_desc = BindGroupLayoutDescriptor::new(
             "Inx Pipeline View Layout",
             &[BindGroupLayoutEntry {
                 binding: 0,
@@ -1227,8 +1227,10 @@ impl FromWorld for InxPipeline {
                 count: None,
             }],
         );
+        let view_layout =
+            render_device.create_bind_group_layout("Inx Pipeline View Layout", &view_layout_desc.entries);
 
-        let basic_uniform_layout = render_device.create_bind_group_layout(
+        let basic_uniform_layout_desc = BindGroupLayoutDescriptor::new(
             "Inx Pipeline Uniform Layout",
             &[BindGroupLayoutEntry {
                 binding: 0,
@@ -1241,8 +1243,10 @@ impl FromWorld for InxPipeline {
                 count: None,
             }],
         );
+        let basic_uniform_layout = render_device
+            .create_bind_group_layout("Inx Pipeline Uniform Layout", &basic_uniform_layout_desc.entries);
 
-        let composite_uniform_layout = render_device.create_bind_group_layout(
+        let composite_uniform_layout_desc = BindGroupLayoutDescriptor::new(
             "Inx Pipeline Composite Uniform Layout",
             &[BindGroupLayoutEntry {
                 binding: 0,
@@ -1255,8 +1259,12 @@ impl FromWorld for InxPipeline {
                 count: None,
             }],
         );
+        let composite_uniform_layout = render_device.create_bind_group_layout(
+            "Inx Pipeline Composite Uniform Layout",
+            &composite_uniform_layout_desc.entries,
+        );
 
-        let texture_layout = render_device.create_bind_group_layout(
+        let texture_layout_desc = BindGroupLayoutDescriptor::new(
             "Inx Pipeline Texture Layout",
             &[
                 BindGroupLayoutEntry {
@@ -1277,6 +1285,8 @@ impl FromWorld for InxPipeline {
                 },
             ],
         );
+        let texture_layout = render_device
+            .create_bind_group_layout("Inx Pipeline Texture Layout", &texture_layout_desc.entries);
 
         let shader_basic = load_embedded_asset!(assets, "basic.wgsl");
         let shader_mask = load_embedded_asset!(assets, "mask.wgsl");
@@ -1284,18 +1294,18 @@ impl FromWorld for InxPipeline {
         let shader_blit = load_embedded_asset!(assets, "blit.wgsl");
 
         let basic_bind_group_layouts = vec![
-            view_layout.clone(),
-            basic_uniform_layout.clone(),
-            texture_layout.clone(),
-            texture_layout.clone(),
-            texture_layout.clone(),
+            view_layout_desc.clone(),
+            basic_uniform_layout_desc.clone(),
+            texture_layout_desc.clone(),
+            texture_layout_desc.clone(),
+            texture_layout_desc.clone(),
         ];
         let composite_bind_group_layouts = vec![
-            view_layout.clone(),
-            composite_uniform_layout.clone(),
-            texture_layout.clone(),
-            texture_layout.clone(),
-            texture_layout.clone(),
+            view_layout_desc.clone(),
+            composite_uniform_layout_desc.clone(),
+            texture_layout_desc.clone(),
+            texture_layout_desc.clone(),
+            texture_layout_desc.clone(),
         ];
 
         let basic_pipeline = create_part_pipeline(
@@ -1313,15 +1323,15 @@ impl FromWorld for InxPipeline {
         );
 
         let bind_group_layout_mask = vec![
-            view_layout.clone(),
-            basic_uniform_layout.clone(),
-            texture_layout.clone(),
+            view_layout_desc.clone(),
+            basic_uniform_layout_desc.clone(),
+            texture_layout_desc.clone(),
         ];
 
         let mask_pipeline =
             create_stencil_pipeline(&shader_mask, &bind_group_layout_mask, pipeline_cache);
 
-        let blit_pipeline = create_blit_pipeline(&shader_blit, &texture_layout, pipeline_cache);
+        let blit_pipeline = create_blit_pipeline(&shader_blit, &texture_layout_desc, pipeline_cache);
         Self {
             basic_pipeline,
             composite_pipeline,
@@ -1339,7 +1349,7 @@ impl FromWorld for InxPipeline {
 fn create_part_pipeline(
     shader: &Handle<Shader>,
     composite: bool,
-    layout: &[BindGroupLayout],
+    layout: &[BindGroupLayoutDescriptor],
     pipeline_cache: &PipelineCache,
 ) -> HashMap<BlendMode, CachedRenderPipelineId> {
     // TODO!: añadir MSAA
@@ -1456,7 +1466,7 @@ fn create_part_pipeline(
 
 fn create_stencil_pipeline(
     shader: &Handle<Shader>,
-    layout: &[BindGroupLayout],
+    layout: &[BindGroupLayoutDescriptor],
     pipeline_cache: &PipelineCache,
 ) -> CachedRenderPipelineId {
     pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
@@ -1525,7 +1535,7 @@ fn create_stencil_pipeline(
 
 fn create_blit_pipeline(
     shader: &Handle<Shader>,
-    texture_layout: &BindGroupLayout, // Solo necesita el layout de textura
+    texture_layout: &BindGroupLayoutDescriptor, // Solo necesita el layout de textura
     pipeline_cache: &PipelineCache,
 ) -> HashMap<u32, CachedRenderPipelineId> {
     let mut map = HashMap::default();
@@ -2239,7 +2249,6 @@ impl<'r> InxRenderPass<'r> {
         render_pass.set_vertex_buffer(1, self.gpu_buffer.uv_buffer.slice(..));
         render_pass.set_index_buffer(
             self.gpu_buffer.index_buffer.slice(..),
-            mask.index_offset as u64,
             IndexFormat::Uint32,
         );
         render_pass.set_bind_group(0, &self.view_bindgroup.value, &[self.view_offset.offset]);
@@ -2296,7 +2305,6 @@ impl<'r> InxRenderPass<'r> {
         render_pass.set_bind_group(4, &framebuffer.bindgroup, &[]);
         render_pass.set_index_buffer(
             self.composite_pool.index_buffer.slice(..),
-            0,
             IndexFormat::Uint32,
         );
         render_pass.draw_indexed(0..3, 0, 0..1);
@@ -2435,7 +2443,6 @@ impl<'r> InxRenderPass<'r> {
         render_pass.set_vertex_buffer(2, self.gpu_buffer.deform_buffer.slice(..));
         render_pass.set_index_buffer(
             self.gpu_buffer.index_buffer.slice(..),
-            0,
             IndexFormat::Uint32,
         );
         render_pass.set_bind_group(0, &self.view_bindgroup.value, &[self.view_offset.offset]);
@@ -2501,7 +2508,6 @@ impl<'r> InxRenderPass<'r> {
         render_pass.set_vertex_buffer(1, self.composite_pool.uv_buffer.slice(..));
         render_pass.set_index_buffer(
             self.composite_pool.index_buffer.slice(..),
-            0,
             IndexFormat::Uint32,
         );
         render_pass.set_bind_group(0, &self.scene_buffer.bindgroup, &[]);
