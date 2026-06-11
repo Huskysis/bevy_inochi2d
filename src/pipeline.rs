@@ -913,7 +913,7 @@ impl CompositeFramebufferEntry {
             mag_filter: FilterMode::Linear,
             min_filter: FilterMode::Linear,
             mipmap_filter: FilterMode::Linear,
-            border_color: Some(SamplerBorderColor::TransparentBlack),
+            border_color: Some(bevy::image::ImageSamplerBorderColor::TransparentBlack.into()),
             ..Default::default()
         });
 
