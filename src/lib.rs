@@ -1,6 +1,9 @@
 pub mod animation;
 pub mod auto_spawn;
 pub mod grid_interpolation;
+pub mod inr;
+pub mod inr_loader;
+#[cfg(feature = "inx")]
 pub mod loader;
 pub mod pipeline;
 pub mod plugin;
@@ -17,14 +20,14 @@ use bevy::{
         render_resource::{BlendComponent, BlendState},
     },
 };
-use inochi2d_parser::owned::Puppet;
 
 pub mod prelude {
     pub use crate::{
-        BlendMode, InxAnimationController, InxMaterial, InxNode, InxNodeType, InxParam, InxPuppet,
-        InxPuppetRoot, InxScene, InxUUID, MeshWrap,
+        BlendMode, InxAnimationController, InxMaskMode, InxMaterial, InxNode, InxNodeType,
+        InxParam, InxPuppet, InxPuppetRoot, InxScene, InxUUID, MeshWrap,
         plugin::{Inochi2dPlugin, InxAnimationPlugin},
     };
+    #[cfg(feature = "inx")]
     pub use inochi2d_parser::prelude::{MaskMode, Transform as InxTransform};
 }
 
@@ -67,8 +70,6 @@ pub struct InxPuppet {
     // Metadata
     pub meta: InxMeta,
     pub physics: InxPhysics,
-
-    pub source: Option<Puppet>,
 }
 
 #[derive(Debug, Clone)]
@@ -185,6 +186,7 @@ pub enum BlendMode {
     SliceFromLower,
 }
 
+#[cfg(feature = "inx")]
 impl From<inochi2d_parser::prelude::BlendMode> for BlendMode {
     fn from(mode: inochi2d_parser::prelude::BlendMode) -> Self {
         use inochi2d_parser::prelude::BlendMode::*;
@@ -491,6 +493,7 @@ pub enum InxMaskMode {
     Dodge,
 }
 
+#[cfg(feature = "inx")]
 impl From<inochi2d_parser::owned::MaskMode> for InxMaskMode {
     fn from(mode: inochi2d_parser::owned::MaskMode) -> Self {
         use inochi2d_parser::owned::MaskMode::*;
@@ -531,6 +534,7 @@ pub enum InxMergeMode {
     Forced,
 }
 
+#[cfg(feature = "inx")]
 impl From<inochi2d_parser::prelude::MergeMode> for InxMergeMode {
     fn from(mode: inochi2d_parser::prelude::MergeMode) -> Self {
         use inochi2d_parser::prelude::MergeMode::*;
@@ -888,6 +892,7 @@ pub enum InxInterpolation {
     Cubic,
 }
 
+#[cfg(feature = "inx")]
 impl From<inochi2d_parser::prelude::Interpolation> for InxInterpolation {
     fn from(mode: inochi2d_parser::prelude::Interpolation) -> Self {
         use inochi2d_parser::prelude::Interpolation::*;

@@ -186,6 +186,7 @@ fn map_output(config: &InxSimplePhysics, diff: Vec2) -> (f32, f32) {
     }
 }
 
+#[cfg(feature = "inx")]
 impl From<inochi2d_parser::prelude::PhysicsModelType> for PhysicsModel {
     fn from(m: inochi2d_parser::prelude::PhysicsModelType) -> Self {
         match m {
@@ -195,6 +196,7 @@ impl From<inochi2d_parser::prelude::PhysicsModelType> for PhysicsModel {
     }
 }
 
+#[cfg(feature = "inx")]
 impl From<inochi2d_parser::prelude::PhysicsMapMode> for PhysicsMapMode {
     fn from(m: inochi2d_parser::prelude::PhysicsMapMode) -> Self {
         match m {

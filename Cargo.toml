@@ -10,10 +10,17 @@ keywords = ["bevy", "inochi2d", "rendering", "2d", "puppet"]
 categories = ["rendering", "game-development", "graphics"]
 exclude = ["assets/", "examples/"]
 
+[features]
+default = []
+# Legacy INX/INP authoring-format loader (pulls in the parser + image decoders).
+inx = ["dep:inochi2d-parser", "dep:bevy_image"]
+
 [dependencies]
-inochi2d-parser = { version = "0.1" }
+inochi2d-parser = { version = "0.1", optional = true }
 thiserror = { version = "2", default-features = false }
 bytemuck = { version = "1.14", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 
 [dependencies.bevy]
@@ -31,6 +38,7 @@ features = [
 version = "0.17"
 default-features = false
 features = ["png", "tga"]
+optional = true
 
 
 [dev-dependencies]

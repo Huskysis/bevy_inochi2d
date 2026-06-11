@@ -120,8 +120,6 @@ fn convert_puppet(raw: RawPuppet, ctx: &mut LoadContext<'_>) -> Result<InxPuppet
         named_animations,
         meta,
         physics,
-        // source: Some(raw),
-        source: None,
     })
 }
 

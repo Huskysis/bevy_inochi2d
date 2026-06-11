@@ -24,7 +24,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     ));
 
     // Cargar y spawnear puppet
-    let puppet: Handle<InxPuppet> = asset_server.load("Arch Chan.inx");
+    let puppet: Handle<InxPuppet> = asset_server.load("Arch Chan.inr");
     commands.spawn(InxScene {
         puppet,
         transform: Transform::from_scale(Vec3::splat(0.5)),

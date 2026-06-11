@@ -4,7 +4,7 @@ use crate::{
     InxAnimation, InxParam, InxPuppet,
     animation::{evaluate_params, update_animation_controller},
     auto_spawn::spawn_scene_system,
-    loader::InxLoader,
+    inr_loader::InrLoader,
     pipeline::InxRenderPipeline,
     simple_physics::simple_physics_system,
 };
@@ -17,12 +17,16 @@ impl Plugin for Inochi2dPlugin {
             .init_asset::<InxPuppet>()
             .init_asset::<InxParam>()
             .init_asset::<InxAnimation>()
-            .preregister_asset_loader::<InxLoader>(&["inx", "inp"])
+            .preregister_asset_loader::<InrLoader>(&["inr"])
             .add_systems(Update, spawn_scene_system);
+        #[cfg(feature = "inx")]
+        app.preregister_asset_loader::<crate::loader::InxLoader>(&["inx", "inp"]);
     }
 
     fn finish(&self, app: &mut App) {
-        app.register_asset_loader(InxLoader);
+        app.register_asset_loader(InrLoader);
+        #[cfg(feature = "inx")]
+        app.register_asset_loader(crate::loader::InxLoader);
     }
 }
 
