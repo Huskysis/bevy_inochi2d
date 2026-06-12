@@ -2,7 +2,7 @@
 
 Standalone Inochi2D renderer powered by Bevy's wgpu backend.
 
-> **⚠️ Important:** This plugin is a **standalone rendering pipeline** - it is **NOT** designed to integrate with Bevy's rendering ecosystem. Bevy's render graph orchestration (sort-key ordered phases, batching, RenderPhase, RenderCommand) conflicts with Inochi2D's requirements: strict z-sort draw order, non-sRGB texture format, composite and mask stack in a sequential pass. This bypasses those systems entirely in a custom `ViewNode` that runs its own command list.
+> **⚠️ Important:** This plugin is a **standalone rendering pipeline** - it is **NOT** designed to integrate with Bevy's rendering ecosystem. Bevy's render graph orchestration (sort-key ordered phases, batching, RenderPhase, RenderCommand) conflicts with Inochi2D's requirements: strict z-sort draw order, composite and mask stack in a sequential pass. This bypasses those systems entirely in a custom `ViewNode` that runs its own command list.
 
 ## ✦ Description
 
@@ -12,13 +12,14 @@ Standalone Inochi2D renderer powered by Bevy's wgpu backend.
 
 | Format | Default | Notes |
 | ------ | ------- | ----- |
-| `.inr` | ✓ | Runtime format: flat pre-order node list, index cross-references, raw RGBA8 textures. Loads with **no image decoding and no UUID maps** — the self-contained reader only needs `serde_json` + `bytemuck`. |
-| `.inx` / `.inp` | feature `inx` | Authoring formats. Pulls in `inochi2d-parser` and the `bevy_image` PNG/TGA decoders. |
+| `.inr` | ✓ | Runtime format: flat pre-order node list, index cross-references, raw RGBA8 textures. Loads with **no image decoding and no UUID maps** via `inochi2d-parser`'s `inr` feature (`serde_json` + `bytemuck` only). |
+| `.inx` / `.inp` | feature `inx` | Authoring formats. Pulls in the full IR parser and the `bevy_image` PNG/TGA decoders. |
 
-Convert an authoring file to INR with the `inochi2d-inr` exporter:
+Convert an authoring file to INR with the parser's exporter (run inside the
+[`inochi2d-parser`](https://github.com/Huskysis/inochi2d-parser) repo):
 
 ```sh
-cargo run -p inochi2d-inr --example inx2inr -- "Arch Chan.inx" "Arch Chan.inr"
+cargo run --features inr-export --example inx2inr -- "Arch Chan.inx" "Arch Chan.inr"
 ```
 
 INR files are larger on disk than INX (textures are stored as raw RGBA8
@@ -32,7 +33,7 @@ bevy_inochi2d = { version = "0.3", features = ["inx"] }
 ## ✦ Features
 
 ✦ **Asset loader**: Loads `.inr` files via Bevy's `AssetServer` (plus `.inx` / `.inp` with the `inx` feature): puppet tree, meshes, textures, parameters and animations.  
-✦ **Custom rendering pipeline**: A single `ViewNode` with its own vertex/index buffers, MRT (albedo + emissive + bumpmap) and a command list (`DrawPart`, `BeginComposite`/`EndComposite`, `PushMask`/`PopMask`).  
+✦ **Custom rendering pipeline**: A single `ViewNode` with its own vertex/index buffers drawing straight to the view target with a command list (`DrawPart`, `BeginComposite`/`EndComposite`, `PushMask`/`PopMask`).  
 ✦ **Mask system**: Stencil-based masks with Mask and Dodge modes.  
 ✦ **Composite nodes**: Offscreen render targets for grouped composition with opacity and tint.  
 ✦ **Parameter system**: 2D grid interpolation (linear/cubic/stepped) for transform bindings and mesh deformations.  
@@ -95,11 +96,11 @@ Inochi2D puppets require a **strict draw order** defined by the puppet tree (tha
 
 ## ✦ Dependencies
 
-- `serde` / `serde_json`: INR JSON chunk parsing.
+- [`inochi2d-parser`](https://github.com/Huskysis/inochi2d-parser) (feature `inr`): INR container reading and typed document.
 - `bytemuck`: Struct to bytes conversion (or GPU buffer).
 - `bevy`: Windowing, asset system, ECS, easy access to wgpu.
 - With feature `inx` only:
-  - [`inochi2d-parser`](https://github.com/Huskysis/inochi2d-parser): IR parser for the INX/INP format.
+  - `inochi2d-parser` IR types for the INX/INP authoring format.
   - `bevy_image`: PNG/TGA texture decoding.
 
 ## ✦ Props: attaching external content

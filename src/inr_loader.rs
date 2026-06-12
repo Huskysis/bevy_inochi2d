@@ -358,7 +358,7 @@ fn convert_param(model: &InrModel, p: &inr::InrParam) -> Result<InxParam, inr::I
 
         bindings.push(InxBinding {
             node_uuid: node.uuid,
-            param_name: b.target.into(),
+            param_name: b.target.clone().into(),
             interpolation: b.interpolation.into(),
             values,
             is_set,
@@ -476,7 +476,7 @@ impl From<inr::InrBindingTarget> for InxParamName {
             T::RotateZ => Self::TransformRZ,
             T::Deform => Self::Deform,
             T::Opacity => Self::Opacity,
-            T::Other => Self::Other,
+            T::Other(_) => Self::Other,
         }
     }
 }

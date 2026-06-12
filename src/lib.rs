@@ -1,7 +1,7 @@
 pub mod animation;
 pub mod auto_spawn;
 pub mod grid_interpolation;
-pub mod inr;
+pub use inochi2d_parser::inr;
 pub mod inr_loader;
 #[cfg(feature = "inx")]
 pub mod loader;
