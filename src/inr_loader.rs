@@ -68,14 +68,8 @@ fn convert(model: &InrModel, ctx: &mut LoadContext<'_>) -> Result<InxPuppet, inr
         }
         let mut data = model.view_bytes(t.view)?.to_vec();
         if t.premultiplied {
-            for px in data.chunks_exact_mut(4) {
-                let a = px[3] as u32;
-                if a > 0 && a < 255 {
-                    for c in &mut px[..3] {
-                        *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
-                    }
-                }
-            }
+            inr::unpremultiply(&mut data);
+            inr::dilate_edges(t.width as usize, t.height as usize, &mut data);
         }
         let mut image = Image::new(
             Extent3d {

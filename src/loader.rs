@@ -141,12 +141,11 @@ fn convert_texture(
         }
     };
 
-    let image = Image::from_buffer(
+    let mut image = Image::from_buffer(
         &data,
         ImageType::Format(format),
         default(),
-        false, // debe ser false
-        // default(),
+        true, // sRGB view: hardware decode, shader premultiplies after sampling
         ImageSampler::Descriptor(ImageSamplerDescriptor {
             label: Some(format!("texture_{}", texture.id)),
             address_mode_u: ImageAddressMode::ClampToBorder,
@@ -159,6 +158,17 @@ fn convert_texture(
         RenderAssetUsages::RENDER_WORLD,
     )
     .map_err(|e| InxError::Parse(e.to_string()))?;
+
+    // INX/INP textures come premultiplied; the pipeline expects straight
+    // alpha (same convention as INR files).
+    if let Some(rgba) = image.data.as_deref_mut() {
+        let (w, h) = (
+            image.texture_descriptor.size.width as usize,
+            image.texture_descriptor.size.height as usize,
+        );
+        inochi2d_parser::inr::unpremultiply(rgba);
+        inochi2d_parser::inr::dilate_edges(w, h, rgba);
+    }
 
     Ok(image)
 }
