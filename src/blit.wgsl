@@ -42,22 +42,7 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let color = textureSample(tex, tex_sampler, in.uv);
-
-    if (color.a < 0.001) {
-        return vec4(0.0);
-    }
-
-    // Scene buffer tiene premultiplied alpha en sRGB space:
-    //  stored = (R_srgb * A, G_srgb * A, B_srgb * A, A)
-    //
-    // Para escribir al ViewTarget (Rgba8UnormSrgb) con blend premultiplied:
-    // Un-premultiply para obtener sRGB straight
-    // sRGB => linear
-    // Re-premultiply en linear space
-    // Hardware aplica linear => sRGB al escribir
-
-    let straight_srgb = color.rgb / color.a;
-    let linear = srgb_to_linear(straight_srgb);
-    return vec4(linear * color.a, color.a);
+    // EXPERIMENT: scene buffer is Rgba8UnormSrgb — hardware decodes to linear
+    // on sample, encodes back when writing to the sRGB ViewTarget. Passthrough.
+    return textureSample(tex, tex_sampler, in.uv);
 }

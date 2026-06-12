@@ -56,14 +56,27 @@ impl AssetLoader for InrLoader {
 fn convert(model: &InrModel, ctx: &mut LoadContext<'_>) -> Result<InxPuppet, inr::InrError> {
     let doc = &model.doc;
 
-    // Textures: raw RGBA8, no decode. Kept non-sRGB so blending happens in
-    // sRGB space (authoring-faithful), matching the render pipeline.
+    // Textures use sRGB views: hardware decodes to linear on sample, blending
+    // happens in linear space and the shader premultiplies after sampling.
+    // Data must be straight alpha; legacy INR files with premultiplied
+    // textures are un-premultiplied here (in gamma space, matching how they
+    // were premultiplied).
     let mut textures = Vec::with_capacity(doc.textures.len());
     for (i, t) in doc.textures.iter().enumerate() {
         if t.format != inr::InrTextureFormat::Rgba8 {
             return Err(inr::InrError::UnsupportedTexture(i));
         }
-        let data = model.view_bytes(t.view)?.to_vec();
+        let mut data = model.view_bytes(t.view)?.to_vec();
+        if t.premultiplied {
+            for px in data.chunks_exact_mut(4) {
+                let a = px[3] as u32;
+                if a > 0 && a < 255 {
+                    for c in &mut px[..3] {
+                        *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+                    }
+                }
+            }
+        }
         let mut image = Image::new(
             Extent3d {
                 width: t.width,
@@ -72,7 +85,7 @@ fn convert(model: &InrModel, ctx: &mut LoadContext<'_>) -> Result<InxPuppet, inr
             },
             TextureDimension::D2,
             data,
-            TextureFormat::Rgba8Unorm,
+            TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::RENDER_WORLD,
         );
         image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {

@@ -897,7 +897,7 @@ impl CompositeFramebufferEntry {
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8Unorm,
+            format: TextureFormat::Rgba8UnormSrgb,
             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
@@ -1067,7 +1067,7 @@ impl SceneFramebuffer {
             mip_level_count: 1,
             sample_count: msaa,
             dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8Unorm, // SIN sRGB
+            format: TextureFormat::Rgba8UnormSrgb, // EXPERIMENT: sRGB
             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
@@ -1379,7 +1379,7 @@ fn create_part_pipeline(
 
         let targets = vec![
             Some(ColorTargetState {
-                format: TextureFormat::Rgba8Unorm,
+                format: TextureFormat::Rgba8UnormSrgb,
                 blend: Some(blend_mode.blend_state()),
                 write_mask: ColorWrites::ALL,
             }),
@@ -1502,7 +1502,7 @@ fn create_stencil_pipeline(
             shader_defs: vec![],
             entry_point: None,
             targets: vec![Some(ColorTargetState {
-                format: TextureFormat::Rgba8Unorm,
+                format: TextureFormat::Rgba8UnormSrgb,
                 blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                 write_mask: ColorWrites::empty(),
             })],

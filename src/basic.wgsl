@@ -77,8 +77,10 @@ fn vx_part(
 fn fg_part(in: VertexOutput) -> FragmentOutput {
     var out: FragmentOutput;
 
-    // Sample albedo texture
-    let albedo_sample = textureSample(tex_albedo, samp_albedo, in.uv);
+    // Textures are straight alpha; the sRGB view decodes to linear on sample.
+    // Premultiply here so blending stays premultiplied in linear space.
+    let albedo_tex = textureSample(tex_albedo, samp_albedo, in.uv);
+    let albedo_sample = vec4<f32>(albedo_tex.rgb * albedo_tex.a, albedo_tex.a);
 
     let screen_blend = uniforms.screen_tint * albedo_sample.a;
     let screen_out = vec3<f32>(1.0) - ((vec3<f32>(1.0) - albedo_sample.rgb) * (vec3<f32>(1.0) - screen_blend));
@@ -87,7 +89,7 @@ fn fg_part(in: VertexOutput) -> FragmentOutput {
     
     // Emissive
     let emissive_sample = textureSample(tex_emissive, samp_emissive, in.uv);
-    out.emissive = vec4<f32>(emissive_sample.rgb * uniforms.emission_strength, 1.0);
+    out.emissive = vec4<f32>(emissive_sample.rgb * emissive_sample.a * uniforms.emission_strength, 1.0);
     
     // Bumpmap
     let bump_sample = textureSample(tex_bumpmap, samp_bumpmap, in.uv);
