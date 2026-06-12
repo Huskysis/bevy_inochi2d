@@ -40,7 +40,8 @@ bevy_inochi2d = { version = "0.3", features = ["inx"] }
 ✦ **Animation controller**: Multi-layer with transition, looping and per-layer blend (additive/override).  
 ✦ **Simple physics**: Pendulum and spring-pendulum simulation feeding params (hair, accessories, etc).  
 ✦ **Scene spawn**: `InxScene` component to spawn a puppet automatically.  
-✦ **Props (pseudo-sprites)**: `InxProp` attaches external textured quads to puppet nodes, rendered *inside* the pipeline with correct z-ordering between parts (e.g. an item in the hand).
+✦ **Props (pseudo-sprites)**: `InxProp` attaches external textured quads to puppet nodes, rendered *inside* the pipeline with correct z-ordering between parts (e.g. an item in the hand).  
+✦ **Render to texture**: Works with Bevy's standard `RenderTarget::Image` and `RenderLayers` — render a puppet offscreen and use the result anywhere (UI, sprites, 3D).
 
 ## ✦ Usage example
 
@@ -123,6 +124,43 @@ commands.entity(hand).with_child((
 ```
 
 See `examples/prop.rs` for a runnable demo (attach/remove at runtime).
+
+## ✦ Render to texture
+
+The pipeline renders per view, so Bevy's standard render-to-texture just works:
+point a camera at an `Image` asset with `RenderTarget::Image` and put the puppet on
+a dedicated `RenderLayers` layer so only that camera draws it. `RenderLayers` can be
+set directly on the `InxScene` command (it is propagated to the puppet root).
+
+```rust
+// Offscreen camera draws layer 1 into `image_handle`.
+commands.spawn((
+    Camera2d,
+    Camera { order: -1, ..Default::default() },
+    RenderTarget::Image(image_handle.clone().into()),
+    RenderLayers::layer(1),
+));
+
+// Puppet visible only to that camera.
+commands.spawn((
+    InxScene { puppet, transform, animation: true },
+    RenderLayers::layer(1),
+));
+```
+
+The resulting texture is a regular `Handle<Image>`: use it in UI (`ImageNode`),
+as a `Sprite`, on a 3D mesh, etc. This is the cheap interop bridge while parts
+don't interleave with Bevy sprites — typical uses:
+
+- Dialog portraits / HUD avatars (`ImageNode`).
+- Character select screens, in-game screens and mirrors.
+- 3D billboards (puppet on a quad in a 3D world).
+- Per-puppet post-processing (outline, hit-flash) on the texture.
+- Rendering at a resolution decoupled from the window; thumbnails.
+
+Notes: the target image must be `Rgba8UnormSrgb` with
+`RENDER_ATTACHMENT | TEXTURE_BINDING` usage, and the offscreen camera must stay
+LDR (no `Hdr` component). See `examples/rtt.rs` for a runnable demo.
 
 ## ✦ TODO
 

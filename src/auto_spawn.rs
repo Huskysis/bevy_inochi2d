@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{camera::visibility::RenderLayers, prelude::*};
 
 use crate::{
     InxAnimationController, InxBasePose, InxDeform, InxNode, InxNodeType, InxParam, InxParamState,
@@ -9,11 +9,11 @@ use crate::{
 /// Sistema que procesa los comandos InxScene y spawnea el árbol de nodos.
 pub fn spawn_scene_system(
     mut commands: Commands,
-    query: Query<(Entity, &InxScene)>,
+    query: Query<(Entity, &InxScene, Option<&RenderLayers>)>,
     puppets: Res<Assets<InxPuppet>>,
     param_assets: Res<Assets<InxParam>>,
 ) {
-    for (entity, scene) in query.iter() {
+    for (entity, scene, layers) in query.iter() {
         let Some(puppet) = puppets.get(&scene.puppet) else {
             continue; // Asset aun no cargado
         };
@@ -38,6 +38,12 @@ pub fn spawn_scene_system(
             },
             scene.transform,
         ));
+
+        // Propagate RenderLayers from the command entity to the puppet root
+        // (the command entity is despawned below).
+        if let Some(layers) = layers {
+            commands.entity(root_entity).insert(layers.clone());
+        }
 
         // Param state
         let param_state = init_param_state(puppet, &param_assets);

@@ -1,5 +1,6 @@
 use bevy::{
     asset::load_embedded_asset,
+    camera::visibility::RenderLayers,
     core_pipeline::core_2d::graph::{Core2d, Node2d},
     mesh::VertexBufferLayout,
     platform::collections::HashMap,
@@ -17,7 +18,9 @@ use bevy::{
         renderer::{RenderContext, RenderDevice, RenderQueue},
         sync_world::RenderEntity,
         texture::{FallbackImage, GpuImage},
-        view::{ExtractedView, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
+        view::{
+            ExtractedView, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms,
+        },
     },
     shader::load_shader_library,
 };
@@ -70,6 +73,8 @@ pub struct InxData {
     /// Copy of the root's `InxStructureVersion` at build time; mismatch
     /// triggers a full command-list rebuild (props added/removed).
     pub structure_version: u32,
+    /// Layers this puppet belongs to; views only draw intersecting puppets.
+    pub layers: RenderLayers,
 }
 
 #[derive(Debug, Clone)]
@@ -209,7 +214,12 @@ pub fn extract_inx_node(
     roots: Extract<Query<Entity, (With<InxUUID>, Without<ChildOf>)>>,
     roots_render: Extract<
         Query<
-            (Entity, &RenderEntity, Option<&InxStructureVersion>),
+            (
+                Entity,
+                &RenderEntity,
+                Option<&InxStructureVersion>,
+                Option<&RenderLayers>,
+            ),
             (With<InxUUID>, Without<ChildOf>),
         >,
     >,
@@ -248,7 +258,7 @@ pub fn extract_inx_node(
     // Primero: detectar si ALGUN puppet necesita slow path
     // (sin InxData, o la estructura cambio — props añadidos/quitados)
     let mut needs_slow_path = false;
-    for (_entity, render_entity, version) in roots_render.iter() {
+    for (_entity, render_entity, version, _layers) in roots_render.iter() {
         match existing_data.get(render_entity.id()) {
             Err(_) => {
                 needs_slow_path = true;
@@ -290,7 +300,7 @@ pub fn extract_inx_node(
             );
         }
 
-        for (entity, render_entity, version) in roots_render.iter() {
+        for (entity, render_entity, version, layers) in roots_render.iter() {
             let Ok(root) = roots.get(entity) else {
                 continue;
             };
@@ -303,12 +313,14 @@ pub fn extract_inx_node(
             if up_to_date {
                 if let Ok(mut data) = existing_data.get_mut(render_entity.id()) {
                     update_dynamic_data(&mut data, &node_map);
+                    data.layers = layers.cloned().unwrap_or_default();
                 }
             } else {
                 // Nuevo puppet o estructura cambiada - full (re)build
                 let uuid_map = build_uuid_map_for_root(root, &node_map);
                 let mut data = InxData {
                     structure_version: current_version,
+                    layers: layers.cloned().unwrap_or_default(),
                     ..Default::default()
                 };
                 let mut tex_lookup: HashMap<AssetId<Image>, u32> = HashMap::new();
@@ -350,9 +362,10 @@ pub fn extract_inx_node(
             );
         }
 
-        for (_entity, render_entity, _version) in roots_render.iter() {
+        for (_entity, render_entity, _version, layers) in roots_render.iter() {
             if let Ok(mut data) = existing_data.get_mut(render_entity.id()) {
                 update_dynamic_data_light(&mut data, &light_map);
+                data.layers = layers.cloned().unwrap_or_default();
             }
         }
     }
@@ -948,7 +961,15 @@ impl CompositeFramebufferEntry {
 
 const MAX_COMPOSITE_DEPTH: usize = 4;
 
-#[derive(Resource)]
+/// Per-view offscreen resources: composite pool and scene depth-stencil.
+/// Each view (window camera, render-to-texture camera) has its own size and
+/// sample count, so these can't be shared globally.
+#[derive(Component)]
+pub struct ViewInxFramebuffers {
+    pub composite: CompositeFramebufferPool,
+    pub scene: SceneFramebuffer,
+}
+
 pub struct CompositeFramebufferPool {
     pub entries: Vec<CompositeFramebufferEntry>,
     pub size: UVec2,
@@ -1006,7 +1027,6 @@ impl CompositeFramebufferPool {
 
 /// Depth-stencil attachment matching the ViewTarget, used for stencil masks
 /// when rendering directly into the view.
-#[derive(Resource)]
 pub struct SceneFramebuffer {
     pub depth_stencil: Texture,
     pub depth_stencil_view: TextureView,
@@ -1485,43 +1505,29 @@ pub fn prepare_view_target_composite_scene(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
-    views: Query<&ViewTarget>,
+    mut views: Query<(Entity, &ViewTarget, Option<&mut ViewInxFramebuffers>)>,
     mut pipeline: ResMut<InxPipeline>,
-    composite: Option<ResMut<CompositeFramebufferPool>>,
-    scene: Option<ResMut<SceneFramebuffer>>,
 ) {
-    let Some(view) = views.iter().next() else {
-        return;
-    };
+    for (entity, view, framebuffers) in views.iter_mut() {
+        let size = view.main_texture().size();
+        let viewport_size = UVec2::new(size.width, size.height);
+        // main_texture() is the resolve target (1x); MSAA texture is separate
+        let samples = view
+            .sampled_main_texture()
+            .map(|t| t.sample_count())
+            .unwrap_or(1);
 
-    let size = view.main_texture().size();
-    let viewport_size = UVec2::new(size.width, size.height);
-    // main_texture() is the resolve target (1x); MSAA texture is separate
-    let samples = view
-        .sampled_main_texture()
-        .map(|t| t.sample_count())
-        .unwrap_or(1);
+        pipeline.ensure_samples(samples, &pipeline_cache);
 
-    pipeline.ensure_samples(samples, &pipeline_cache);
-
-    if let Some(mut framebuffer) = composite {
-        framebuffer.resize(&render_device, viewport_size, &pipeline);
-    } else {
-        commands.insert_resource(CompositeFramebufferPool::new(
-            &render_device,
-            viewport_size,
-            &pipeline,
-        ));
-    }
-
-    if let Some(mut fb) = scene {
-        fb.resize(&render_device, viewport_size, samples);
-    } else {
-        commands.insert_resource(SceneFramebuffer::new(
-            &render_device,
-            viewport_size,
-            samples,
-        ));
+        if let Some(mut fbs) = framebuffers {
+            fbs.composite.resize(&render_device, viewport_size, &pipeline);
+            fbs.scene.resize(&render_device, viewport_size, samples);
+        } else {
+            commands.entity(entity).insert(ViewInxFramebuffers {
+                composite: CompositeFramebufferPool::new(&render_device, viewport_size, &pipeline),
+                scene: SceneFramebuffer::new(&render_device, viewport_size, samples),
+            });
+        }
     }
 }
 
@@ -1668,7 +1674,11 @@ impl FromWorld for InxRenderViewNode {
 }
 
 impl ViewNode for InxRenderViewNode {
-    type ViewQuery = &'static ViewTarget;
+    type ViewQuery = (
+        &'static ViewTarget,
+        &'static ViewInxFramebuffers,
+        Option<&'static RenderLayers>,
+    );
 
     fn update(&mut self, world: &mut World) {
         self.extract_buffer.update_archetypes(world);
@@ -1680,7 +1690,11 @@ impl ViewNode for InxRenderViewNode {
         &self,
         graph: &mut bevy::render::render_graph::RenderGraphContext,
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
-        view_target: bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (view_target, view_framebuffers, view_layers): bevy::ecs::query::QueryItem<
+            'w,
+            '_,
+            Self::ViewQuery,
+        >,
         world: &'w World,
     ) -> std::result::Result<(), bevy::render::render_graph::NodeRunError> {
         let Some(inx_pipeline) = world.get_resource::<InxPipeline>() else {
@@ -1709,13 +1723,8 @@ impl ViewNode for InxRenderViewNode {
             return Ok(());
         };
 
-        let Some(composite_fb_pool) = world.get_resource::<CompositeFramebufferPool>() else {
-            return Ok(());
-        };
-
-        let Some(scene_fb) = world.get_resource::<SceneFramebuffer>() else {
-            return Ok(());
-        };
+        let composite_fb_pool = &view_framebuffers.composite;
+        let scene_fb = &view_framebuffers.scene;
 
         let render_device = world.resource::<RenderDevice>();
 
@@ -1724,9 +1733,15 @@ impl ViewNode for InxRenderViewNode {
             .map(|t| t.sample_count())
             .unwrap_or(1);
 
+        let default_layers = RenderLayers::default();
+        let view_layers = view_layers.unwrap_or(&default_layers);
+
         // Obtener puppets
         for (entity, data, puppet_gpu_buffers) in self.extract_buffer.iter_manual(world) {
             if data.commands.is_empty() {
+                continue;
+            }
+            if !view_layers.intersects(&data.layers) {
                 continue;
             }
 
