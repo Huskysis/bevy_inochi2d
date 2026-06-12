@@ -48,11 +48,8 @@ struct VertexOutput {
     @location(1) uv: vec2<f32>,
 }
 
-// MRT output - 3 render targets
 struct FragmentOutput {
     @location(0) albedo: vec4<f32>,
-    @location(1) emissive: vec4<f32>,
-    @location(2) bump: vec4<f32>,
 }
 
 @vertex
@@ -86,14 +83,6 @@ fn fg_part(in: VertexOutput) -> FragmentOutput {
     let screen_out = vec3<f32>(1.0) - ((vec3<f32>(1.0) - albedo_sample.rgb) * (vec3<f32>(1.0) - screen_blend));
 
     out.albedo = vec4<f32>(screen_out * uniforms.tint, albedo_sample.a) * uniforms.opacity;
-    
-    // Emissive
-    let emissive_sample = textureSample(tex_emissive, samp_emissive, in.uv);
-    out.emissive = vec4<f32>(emissive_sample.rgb * emissive_sample.a * uniforms.emission_strength, 1.0);
-    
-    // Bumpmap
-    let bump_sample = textureSample(tex_bumpmap, samp_bumpmap, in.uv);
-    out.bump = vec4<f32>(bump_sample.rgb, 1.0) * out.albedo.a;
-    
+
     return out;
 }

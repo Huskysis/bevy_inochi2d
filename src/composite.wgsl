@@ -57,8 +57,6 @@ fn vx_composite(
 
 struct FragmentOutput {
     @location(0) albedo: vec4<f32>,
-    @location(1) emissive: vec4<f32>,
-    @location(2) bump: vec4<f32>,
 }
 
 @fragment
@@ -66,17 +64,11 @@ fn fg_composite(in: VertexOutput) -> FragmentOutput {
     var out: FragmentOutput;
 
     let albedo_sample = textureSample(tex_albedo, samp_albedo, in.uv);
-    let emissive_sample = textureSample(tex_emissive, samp_emissive, in.uv);
-    let bump_sample = textureSample(tex_bumpmap, samp_bumpmap, in.uv);
 
     let screen_blend = uniforms.screen_tint * albedo_sample.a;
     let screen_out = vec3<f32>(1.0) - ((vec3<f32>(1.0) - albedo_sample.rgb) * (vec3<f32>(1.0) - screen_blend));
 
     out.albedo = vec4<f32>(screen_out * uniforms.tint, albedo_sample.a) * uniforms.opacity;
-
-    out.emissive = emissive_sample * uniforms.opacity;
-
-    out.bump = vec4<f32>(bump_sample.rgb, 1.0) * out.albedo.a;
 
     return out;
 }

@@ -781,7 +781,6 @@ impl bevy::app::Plugin for InxRenderPipeline {
         load_shader_library!(app, "basic.wgsl");
         load_shader_library!(app, "mask.wgsl");
         load_shader_library!(app, "composite.wgsl");
-        load_shader_library!(app, "blit.wgsl");
         app.add_plugins(ExtractComponentPlugin::<InxUUID>::default())
             .add_plugins(UniformComponentPlugin::<InxUniform>::default());
 
@@ -874,10 +873,6 @@ pub struct ViewBindGroupInx {
 pub struct CompositeFramebufferEntry {
     pub albedo: Texture,
     pub albedo_view: TextureView,
-    pub emissive: Texture,
-    pub emissive_view: TextureView,
-    pub bump: Texture,
-    pub bump_view: TextureView,
     pub depth_stencil: Texture,
     pub depth_stencil_view: TextureView,
     pub bindgroup: BindGroup,
@@ -902,30 +897,6 @@ impl CompositeFramebufferEntry {
             view_formats: &[],
         });
         let albedo_view = albedo.create_view(&TextureViewDescriptor::default());
-
-        let emissive = device.create_texture(&TextureDescriptor {
-            label: Some(&format!("inx_cf_emissive_{index}")),
-            size: extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8Unorm,
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let emissive_view = emissive.create_view(&TextureViewDescriptor::default());
-
-        let bump = device.create_texture(&TextureDescriptor {
-            label: Some(&format!("inx_cf_bump_{index}")),
-            size: extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8Unorm,
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let bump_view = bump.create_view(&TextureViewDescriptor::default());
 
         let depth_stencil = device.create_texture(&TextureDescriptor {
             label: Some(&format!("inx_cf_depth_stencil_{index}")),
@@ -968,10 +939,6 @@ impl CompositeFramebufferEntry {
         Self {
             albedo,
             albedo_view,
-            emissive,
-            emissive_view,
-            bump,
-            bump_view,
             depth_stencil,
             depth_stencil_view,
             bindgroup,
@@ -1037,81 +1004,32 @@ impl CompositeFramebufferPool {
     }
 }
 
-/// Buffer intermedio donde se renderiza toda la escena Inochi2D
-/// en Rgba8Unorm (sin conversion sRGB)
+/// Depth-stencil attachment matching the ViewTarget, used for stencil masks
+/// when rendering directly into the view.
 #[derive(Resource)]
 pub struct SceneFramebuffer {
-    pub texture: Texture,
-    pub view: TextureView,
-    pub emissive: Texture,
-    pub emissive_view: TextureView,
-    pub bump: Texture,
-    pub bump_view: TextureView,
     pub depth_stencil: Texture,
     pub depth_stencil_view: TextureView,
-    pub bindgroup: BindGroup,
     pub size: UVec2,
+    pub samples: u32,
 }
 
 impl SceneFramebuffer {
-    pub fn new(device: &RenderDevice, size: UVec2, pipeline: &InxPipeline, msaa: u32) -> Self {
+    pub fn new(device: &RenderDevice, size: UVec2, samples: u32) -> Self {
         let extent = Extent3d {
             width: size.x.max(1),
             height: size.y.max(1),
             depth_or_array_layers: 1,
         };
 
-        let texture = device.create_texture(&TextureDescriptor {
-            label: Some("inx_scene_buffer"),
-            size: extent,
-            mip_level_count: 1,
-            sample_count: msaa,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8UnormSrgb, // EXPERIMENT: sRGB
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&TextureViewDescriptor::default());
-
-        let emissive = device.create_texture(&TextureDescriptor {
-            label: Some("inx_scene_emissive"),
-            size: extent,
-            mip_level_count: 1,
-            sample_count: msaa,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8Unorm, // Deberia ser Rgba32Float
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let emissive_view = emissive.create_view(&TextureViewDescriptor::default());
-
-        let bump = device.create_texture(&TextureDescriptor {
-            label: Some("inx_scene_bump"),
-            size: extent,
-            mip_level_count: 1,
-            sample_count: msaa,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8Unorm, // Igual que Albedo, SIN sRGB
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let bump_view = bump.create_view(&TextureViewDescriptor::default());
-
-        let sampler = device.create_sampler(&SamplerDescriptor {
-            label: Some("inx_scene_sampler"),
-            mag_filter: FilterMode::Linear,
-            min_filter: FilterMode::Linear,
-            ..Default::default()
-        });
-
         let depth_stencil = device.create_texture(&TextureDescriptor {
             label: Some("inx_scene_depth_stencil"),
             size: extent,
             mip_level_count: 1,
-            sample_count: msaa,
+            sample_count: samples,
             dimension: TextureDimension::D2,
             format: TextureFormat::Depth24PlusStencil8,
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            usage: TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
 
@@ -1120,44 +1038,17 @@ impl SceneFramebuffer {
             ..Default::default()
         });
 
-        let bindgroup = device.create_bind_group(
-            Some("inx_scene_bindgroup"),
-            &pipeline.texture_layout,
-            &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::TextureView(&view),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::Sampler(&sampler),
-                },
-            ],
-        );
-
         Self {
-            texture,
-            view,
-            emissive,
-            emissive_view,
-            bump,
-            bump_view,
             depth_stencil,
             depth_stencil_view,
-            bindgroup,
             size,
+            samples,
         }
     }
 
-    pub fn resize(
-        &mut self,
-        device: &RenderDevice,
-        new_size: UVec2,
-        pipeline: &InxPipeline,
-        msaa: u32,
-    ) {
-        if self.size != new_size {
-            *self = Self::new(device, new_size, pipeline, msaa);
+    pub fn resize(&mut self, device: &RenderDevice, new_size: UVec2, samples: u32) {
+        if self.size != new_size || self.samples != samples {
+            *self = Self::new(device, new_size, samples);
         }
     }
 }
@@ -1197,15 +1088,56 @@ pub struct InxTexturesBindGroup {
 
 #[derive(Resource)]
 pub struct InxPipeline {
-    pub basic_pipeline: HashMap<BlendMode, CachedRenderPipelineId>,
-    pub composite_pipeline: HashMap<BlendMode, CachedRenderPipelineId>,
-    pub mask_pipeline: CachedRenderPipelineId,
-    pub blit_pipeline: HashMap<u32, CachedRenderPipelineId>,
+    /// Keyed by (blend mode, sample count). Sample count 1 is used for
+    /// offscreen composite content; the view's sample count for direct
+    /// rendering into the ViewTarget.
+    pub basic_pipeline: HashMap<(BlendMode, u32), CachedRenderPipelineId>,
+    pub composite_pipeline: HashMap<(BlendMode, u32), CachedRenderPipelineId>,
+    pub mask_pipeline: HashMap<u32, CachedRenderPipelineId>,
 
     pub view_layout: BindGroupLayout,
     pub basic_uniform_layout: BindGroupLayout,
     pub composite_uniform_layout: BindGroupLayout,
     pub texture_layout: BindGroupLayout,
+
+    // Kept for lazy per-sample-count pipeline creation.
+    shader_basic: Handle<Shader>,
+    shader_mask: Handle<Shader>,
+    shader_composite: Handle<Shader>,
+    basic_layouts: Vec<BindGroupLayoutDescriptor>,
+    composite_layouts: Vec<BindGroupLayoutDescriptor>,
+    mask_layouts: Vec<BindGroupLayoutDescriptor>,
+}
+
+impl InxPipeline {
+    /// Create the pipeline set for `samples` if it doesn't exist yet.
+    pub fn ensure_samples(&mut self, samples: u32, pipeline_cache: &PipelineCache) {
+        if self.mask_pipeline.contains_key(&samples) {
+            return;
+        }
+        for (mode, id) in create_part_pipeline(
+            &self.shader_basic,
+            false,
+            &self.basic_layouts,
+            pipeline_cache,
+            samples,
+        ) {
+            self.basic_pipeline.insert((mode, samples), id);
+        }
+        for (mode, id) in create_part_pipeline(
+            &self.shader_composite,
+            true,
+            &self.composite_layouts,
+            pipeline_cache,
+            samples,
+        ) {
+            self.composite_pipeline.insert((mode, samples), id);
+        }
+        self.mask_pipeline.insert(
+            samples,
+            create_stencil_pipeline(&self.shader_mask, &self.mask_layouts, pipeline_cache, samples),
+        );
+    }
 }
 
 impl FromWorld for InxPipeline {
@@ -1291,7 +1223,6 @@ impl FromWorld for InxPipeline {
         let shader_basic = load_embedded_asset!(assets, "basic.wgsl");
         let shader_mask = load_embedded_asset!(assets, "mask.wgsl");
         let shader_composite = load_embedded_asset!(assets, "composite.wgsl");
-        let shader_blit = load_embedded_asset!(assets, "blit.wgsl");
 
         let basic_bind_group_layouts = vec![
             view_layout_desc.clone(),
@@ -1308,41 +1239,32 @@ impl FromWorld for InxPipeline {
             texture_layout_desc.clone(),
         ];
 
-        let basic_pipeline = create_part_pipeline(
-            &shader_basic,
-            false,
-            &basic_bind_group_layouts,
-            pipeline_cache,
-        );
-
-        let composite_pipeline = create_part_pipeline(
-            &shader_composite,
-            true,
-            &composite_bind_group_layouts,
-            pipeline_cache,
-        );
-
         let bind_group_layout_mask = vec![
             view_layout_desc.clone(),
             basic_uniform_layout_desc.clone(),
             texture_layout_desc.clone(),
         ];
 
-        let mask_pipeline =
-            create_stencil_pipeline(&shader_mask, &bind_group_layout_mask, pipeline_cache);
-
-        let blit_pipeline = create_blit_pipeline(&shader_blit, &texture_layout_desc, pipeline_cache);
-        Self {
-            basic_pipeline,
-            composite_pipeline,
-            mask_pipeline,
-            blit_pipeline,
+        let mut this = Self {
+            basic_pipeline: HashMap::default(),
+            composite_pipeline: HashMap::default(),
+            mask_pipeline: HashMap::default(),
 
             view_layout,
             basic_uniform_layout,
             composite_uniform_layout,
             texture_layout,
-        }
+
+            shader_basic,
+            shader_mask,
+            shader_composite,
+            basic_layouts: basic_bind_group_layouts,
+            composite_layouts: composite_bind_group_layouts,
+            mask_layouts: bind_group_layout_mask,
+        };
+        // Offscreen (composite) content always renders at sample count 1.
+        this.ensure_samples(1, pipeline_cache);
+        this
     }
 }
 
@@ -1351,8 +1273,8 @@ fn create_part_pipeline(
     composite: bool,
     layout: &[BindGroupLayoutDescriptor],
     pipeline_cache: &PipelineCache,
+    samples: u32,
 ) -> HashMap<BlendMode, CachedRenderPipelineId> {
-    // TODO!: añadir MSAA
     let vertex_buffers = {
         let capacity = if composite { 2 } else { 3 };
         let mut vb = Vec::with_capacity(capacity as usize);
@@ -1372,39 +1294,16 @@ fn create_part_pipeline(
     let mut basic = HashMap::default();
     for blend_mode in BlendMode::ALL {
         let label = format!(
-            "inx_pipeline_{}_{:?}",
+            "inx_pipeline_{}_{:?}_x{samples}",
             if composite { "composite" } else { "part" },
             blend_mode
         );
 
-        let targets = vec![
-            Some(ColorTargetState {
-                format: TextureFormat::Rgba8UnormSrgb,
-                blend: Some(blend_mode.blend_state()),
-                write_mask: ColorWrites::ALL,
-            }),
-            Some(ColorTargetState {
-                format: TextureFormat::Rgba8Unorm,
-                blend: Some(BlendState {
-                    color: BlendComponent {
-                        src_factor: BlendFactor::One,
-                        dst_factor: BlendFactor::One,
-                        operation: BlendOperation::Add,
-                    },
-                    alpha: BlendComponent {
-                        src_factor: BlendFactor::One,
-                        dst_factor: BlendFactor::One,
-                        operation: BlendOperation::Add,
-                    },
-                }),
-                write_mask: ColorWrites::ALL,
-            }),
-            Some(ColorTargetState {
-                format: TextureFormat::Rgba8Unorm,
-                blend: Some(blend_mode.blend_state()),
-                write_mask: ColorWrites::ALL,
-            }),
-        ];
+        let targets = vec![Some(ColorTargetState {
+            format: TextureFormat::Rgba8UnormSrgb,
+            blend: Some(blend_mode.blend_state()),
+            write_mask: ColorWrites::ALL,
+        })];
 
         let pipeline = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
             label: Some(label.into()),
@@ -1448,7 +1347,7 @@ fn create_part_pipeline(
                 })
             },
             multisample: MultisampleState {
-                count: 1, // No es necsario, 1° es 2D, 2° no va directo en bevy
+                count: samples,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
@@ -1468,9 +1367,10 @@ fn create_stencil_pipeline(
     shader: &Handle<Shader>,
     layout: &[BindGroupLayoutDescriptor],
     pipeline_cache: &PipelineCache,
+    samples: u32,
 ) -> CachedRenderPipelineId {
     pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-        label: Some("inx_pipeline_stencil".into()),
+        label: Some(format!("inx_pipeline_stencil_x{samples}").into()),
         layout: layout.to_owned(),
         vertex: VertexState {
             shader: shader.clone(),
@@ -1529,68 +1429,13 @@ fn create_stencil_pipeline(
             },
             bias: DepthBiasState::default(),
         }),
+        multisample: MultisampleState {
+            count: samples,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
         ..Default::default()
     })
-}
-
-fn create_blit_pipeline(
-    shader: &Handle<Shader>,
-    texture_layout: &BindGroupLayoutDescriptor, // Solo necesita el layout de textura
-    pipeline_cache: &PipelineCache,
-) -> HashMap<u32, CachedRenderPipelineId> {
-    let mut map = HashMap::default();
-
-    for msaa in [1, 2, 4, 8] {
-        let idx = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-            label: Some("inx_blit_pipeline".into()),
-            layout: vec![texture_layout.clone()],
-            vertex: VertexState {
-                shader: shader.clone(),
-                shader_defs: vec![],
-                entry_point: None,
-                buffers: vec![
-                    VertexBufferLayout {
-                        array_stride: std::mem::size_of::<[f32; 2]>() as u64,
-                        step_mode: VertexStepMode::Vertex,
-                        attributes: vec![VertexAttribute {
-                            format: VertexFormat::Float32x2,
-                            offset: 0,
-                            shader_location: 0,
-                        }],
-                    },
-                    VertexBufferLayout {
-                        array_stride: std::mem::size_of::<[f32; 2]>() as u64,
-                        step_mode: VertexStepMode::Vertex,
-                        attributes: vec![VertexAttribute {
-                            format: VertexFormat::Float32x2,
-                            offset: 0,
-                            shader_location: 1,
-                        }],
-                    },
-                ],
-            },
-            fragment: Some(FragmentState {
-                shader: shader.clone(),
-                shader_defs: vec![],
-                entry_point: None,
-                targets: vec![Some(ColorTargetState {
-                    // ViewTarget es Rgba8UnormSrgb - el hardware aplica pow(1/2.2)
-                    format: TextureFormat::Rgba8UnormSrgb,
-                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: ColorWrites::ALL,
-                })],
-            }),
-            depth_stencil: None,
-            multisample: MultisampleState {
-                count: msaa,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            ..Default::default()
-        });
-        map.insert(msaa, idx);
-    }
-    map
 }
 
 pub fn prepare_puppet_buffers(
@@ -1639,8 +1484,9 @@ pub fn prepare_puppet_buffers(
 pub fn prepare_view_target_composite_scene(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
+    pipeline_cache: Res<PipelineCache>,
     views: Query<&ViewTarget>,
-    pipeline: Res<InxPipeline>,
+    mut pipeline: ResMut<InxPipeline>,
     composite: Option<ResMut<CompositeFramebufferPool>>,
     scene: Option<ResMut<SceneFramebuffer>>,
 ) {
@@ -1650,6 +1496,13 @@ pub fn prepare_view_target_composite_scene(
 
     let size = view.main_texture().size();
     let viewport_size = UVec2::new(size.width, size.height);
+    // main_texture() is the resolve target (1x); MSAA texture is separate
+    let samples = view
+        .sampled_main_texture()
+        .map(|t| t.sample_count())
+        .unwrap_or(1);
+
+    pipeline.ensure_samples(samples, &pipeline_cache);
 
     if let Some(mut framebuffer) = composite {
         framebuffer.resize(&render_device, viewport_size, &pipeline);
@@ -1662,13 +1515,12 @@ pub fn prepare_view_target_composite_scene(
     }
 
     if let Some(mut fb) = scene {
-        fb.resize(&render_device, viewport_size, &pipeline, 1);
+        fb.resize(&render_device, viewport_size, samples);
     } else {
         commands.insert_resource(SceneFramebuffer::new(
             &render_device,
             viewport_size,
-            &pipeline,
-            1,
+            samples,
         ));
     }
 }
@@ -1867,13 +1719,16 @@ impl ViewNode for InxRenderViewNode {
 
         let render_device = world.resource::<RenderDevice>();
 
+        let samples = view_target
+            .sampled_main_texture()
+            .map(|t| t.sample_count())
+            .unwrap_or(1);
+
         // Obtener puppets
         for (entity, data, puppet_gpu_buffers) in self.extract_buffer.iter_manual(world) {
             if data.commands.is_empty() {
                 continue;
             }
-
-            let color = &[Some(view_target.get_color_attachment())];
 
             let tmp_render_pass = InxRenderPass {
                 render_device,
@@ -1886,9 +1741,11 @@ impl ViewNode for InxRenderViewNode {
                 view_offset,
                 composite_pool: composite_fb_pool,
                 scene_buffer: scene_fb,
+                view_target,
+                samples,
             };
 
-            tmp_render_pass.render(render_context, data, color);
+            tmp_render_pass.render(render_context, data);
         }
         Ok(())
     }
@@ -1932,18 +1789,14 @@ struct InxRenderPass<'r> {
 
     composite_pool: &'r CompositeFramebufferPool,
     scene_buffer: &'r SceneFramebuffer,
+    view_target: &'r ViewTarget,
+    samples: u32,
 }
 
 impl<'r> InxRenderPass<'r> {
-    fn render(
-        &self,
-        render_context: &mut RenderContext,
-        data: &InxData,
-        surface_attachments: &[Option<RenderPassColorAttachment<'r>>],
-    ) {
+    fn render(&self, render_context: &mut RenderContext, data: &InxData) {
         let mut stack: Vec<CompositeFrame> = Vec::new();
         let mut stencil_ref: u32 = 0;
-        let mut first_scene_draw = true;
         let mut composite_first_draw: Vec<bool> = Vec::new();
 
         let pool = self.build_uniform_pool(data);
@@ -1967,19 +1820,32 @@ impl<'r> InxRenderPass<'r> {
                         &pool,
                         &stack,
                         stencil_ref,
-                        &mut first_scene_draw,
                         &mut composite_first_draw,
                     );
                     batch.clear();
 
-                    let (color_view, stencil_view) = if let Some(frame) = stack.last() {
-                        (&frame.entry.albedo_view, &frame.entry.depth_stencil_view)
-                    } else {
-                        (
-                            &self.scene_buffer.view,
-                            &self.scene_buffer.depth_stencil_view,
-                        )
-                    };
+                    let (color_attachment, stencil_view, ctx_samples) =
+                        if let Some(frame) = stack.last() {
+                            (
+                                RenderPassColorAttachment {
+                                    view: &frame.entry.albedo_view,
+                                    depth_slice: None,
+                                    resolve_target: None,
+                                    ops: Operations {
+                                        load: LoadOp::Load,
+                                        store: StoreOp::Store,
+                                    },
+                                },
+                                &frame.entry.depth_stencil_view,
+                                1,
+                            )
+                        } else {
+                            (
+                                self.view_target.get_color_attachment(),
+                                &self.scene_buffer.depth_stencil_view,
+                                self.samples,
+                            )
+                        };
 
                     stencil_ref += 1;
 
@@ -1987,7 +1853,8 @@ impl<'r> InxRenderPass<'r> {
                         render_context,
                         mask,
                         stencil_view,
-                        color_view,
+                        color_attachment,
+                        ctx_samples,
                         stencil_ref,
                         &pool,
                         mask_idx,
@@ -2002,33 +1869,35 @@ impl<'r> InxRenderPass<'r> {
                         &pool,
                         &stack,
                         stencil_ref,
-                        &mut first_scene_draw,
                         &mut composite_first_draw,
                     );
                     batch.clear();
 
                     stencil_ref = stencil_ref.saturating_sub(1);
 
-                    let (color_view, stencil_view) = if let Some(frame) = stack.last() {
-                        (&frame.entry.albedo_view, &frame.entry.depth_stencil_view)
+                    let (color_attachment, stencil_view) = if let Some(frame) = stack.last() {
+                        (
+                            RenderPassColorAttachment {
+                                view: &frame.entry.albedo_view,
+                                depth_slice: None,
+                                resolve_target: None,
+                                ops: Operations {
+                                    load: LoadOp::Load,
+                                    store: StoreOp::Store,
+                                },
+                            },
+                            &frame.entry.depth_stencil_view,
+                        )
                     } else {
                         (
-                            &self.scene_buffer.view,
+                            self.view_target.get_color_attachment(),
                             &self.scene_buffer.depth_stencil_view,
                         )
                     };
 
                     let _pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
                         label: Some("inx_stencil_clear"),
-                        color_attachments: &[Some(RenderPassColorAttachment {
-                            view: color_view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: Operations {
-                                load: LoadOp::Load,
-                                store: StoreOp::Store,
-                            },
-                        })],
+                        color_attachments: &[Some(color_attachment)],
                         depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
                             view: stencil_view,
                             depth_ops: None,
@@ -2049,7 +1918,6 @@ impl<'r> InxRenderPass<'r> {
                         &pool,
                         &stack,
                         stencil_ref,
-                        &mut first_scene_draw,
                         &mut composite_first_draw,
                     );
                     batch.clear();
@@ -2074,7 +1942,6 @@ impl<'r> InxRenderPass<'r> {
                         &pool,
                         &stack,
                         stencil_ref,
-                        &mut first_scene_draw,
                         &mut composite_first_draw,
                     );
                     batch.clear();
@@ -2084,7 +1951,7 @@ impl<'r> InxRenderPass<'r> {
                     };
                     composite_first_draw.pop();
 
-                    let parent_attachments = if let Some(parent) = stack.last_mut() {
+                    let (parent_attachment, ctx_samples) = if let Some(parent) = stack.last_mut() {
                         let first = parent.draw_count == 0;
                         parent.draw_count += 1;
                         if let Some(flag) = composite_first_draw.last_mut() {
@@ -2095,8 +1962,8 @@ impl<'r> InxRenderPass<'r> {
                         } else {
                             LoadOp::Load
                         };
-                        [
-                            Some(RenderPassColorAttachment {
+                        (
+                            RenderPassColorAttachment {
                                 view: &parent.entry.albedo_view,
                                 depth_slice: None,
                                 resolve_target: None,
@@ -2104,77 +1971,19 @@ impl<'r> InxRenderPass<'r> {
                                     load,
                                     store: StoreOp::Store,
                                 },
-                            }),
-                            Some(RenderPassColorAttachment {
-                                view: &parent.entry.emissive_view,
-                                depth_slice: None,
-                                resolve_target: None,
-                                ops: Operations {
-                                    load: if first {
-                                        LoadOp::Clear(LinearRgba::BLACK.into())
-                                    } else {
-                                        LoadOp::Load
-                                    },
-                                    store: StoreOp::Store,
-                                },
-                            }),
-                            Some(RenderPassColorAttachment {
-                                view: &parent.entry.bump_view,
-                                depth_slice: None,
-                                resolve_target: None,
-                                ops: Operations {
-                                    load,
-                                    store: StoreOp::Store,
-                                },
-                            }),
-                        ]
+                            },
+                            1,
+                        )
                     } else {
-                        let load = if first_scene_draw {
-                            first_scene_draw = false;
-                            LoadOp::Clear(LinearRgba::NONE.into())
-                        } else {
-                            LoadOp::Load
-                        };
-                        [
-                            Some(RenderPassColorAttachment {
-                                view: &self.scene_buffer.view,
-                                depth_slice: None,
-                                resolve_target: None,
-                                ops: Operations {
-                                    load,
-                                    store: StoreOp::Store,
-                                },
-                            }),
-                            Some(RenderPassColorAttachment {
-                                view: &self.scene_buffer.emissive_view,
-                                depth_slice: None,
-                                resolve_target: None,
-                                ops: Operations {
-                                    load: if first_scene_draw {
-                                        LoadOp::Clear(LinearRgba::BLACK.into())
-                                    } else {
-                                        LoadOp::Load
-                                    },
-                                    store: StoreOp::Store,
-                                },
-                            }),
-                            Some(RenderPassColorAttachment {
-                                view: &self.scene_buffer.bump_view,
-                                depth_slice: None,
-                                resolve_target: None,
-                                ops: Operations {
-                                    load,
-                                    store: StoreOp::Store,
-                                },
-                            }),
-                        ]
+                        (self.view_target.get_color_attachment(), self.samples)
                     };
 
                     self.render_composite_blit_pooled(
                         render_context,
                         frame.header,
                         frame.entry,
-                        &parent_attachments,
+                        parent_attachment,
+                        ctx_samples,
                         &pool,
                         comp_idx,
                     );
@@ -2189,39 +1998,30 @@ impl<'r> InxRenderPass<'r> {
             &pool,
             &stack,
             stencil_ref,
-            &mut first_scene_draw,
             &mut composite_first_draw,
         );
-
-        self.blit_to_screen(render_context, surface_attachments);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_mask_pooled(
         &self,
         render_context: &mut RenderContext,
         mask: &MaskHeader,
         stencil_view: &TextureView,
-        color_view: &TextureView,
+        color_attachment: RenderPassColorAttachment,
+        ctx_samples: u32,
         stencil_ref: u32,
         pool: &UniformPool,
         mask_idx: usize,
     ) {
-        let Some(cache_pipeline) = self
-            .pipeline_cache
-            .get_render_pipeline(self.pipeline_resource.mask_pipeline)
-        else {
+        let Some(&pid) = self.pipeline_resource.mask_pipeline.get(&ctx_samples) else {
+            return;
+        };
+        let Some(cache_pipeline) = self.pipeline_cache.get_render_pipeline(pid) else {
             return;
         };
 
-        let color_attachments = &[Some(RenderPassColorAttachment {
-            view: color_view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: Operations {
-                load: LoadOp::Load,
-                store: StoreOp::Store,
-            },
-        })];
+        let color_attachments = &[Some(color_attachment)];
 
         let stencil_ref_value = match mask.mode {
             MaskMode::Mask => stencil_ref,
@@ -2266,25 +2066,31 @@ impl<'r> InxRenderPass<'r> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_composite_blit_pooled(
         &self,
         render_context: &mut RenderContext,
         header: &CompositeHeader,
         framebuffer: &CompositeFramebufferEntry,
-        parent_attachments: &[Option<RenderPassColorAttachment>],
+        parent_attachment: RenderPassColorAttachment,
+        ctx_samples: u32,
         pool: &UniformPool,
         comp_idx: usize,
     ) {
-        let blit_attachments = parent_attachments;
-
-        let pipeline_id = self.pipeline_resource.composite_pipeline[&header.blend_mode];
+        let Some(&pipeline_id) = self
+            .pipeline_resource
+            .composite_pipeline
+            .get(&(header.blend_mode, ctx_samples))
+        else {
+            return;
+        };
         let Some(cache_pipeline) = self.pipeline_cache.get_render_pipeline(pipeline_id) else {
             return;
         };
 
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
             label: Some("inx_composite_blit"),
-            color_attachments: blit_attachments,
+            color_attachments: &[Some(parent_attachment)],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -2317,7 +2123,6 @@ impl<'r> InxRenderPass<'r> {
         pool: &UniformPool,
         stack: &[CompositeFrame],
         stencil_ref: u32,
-        first_scene_draw: &mut bool,
         composite_first_draw: &mut [bool],
     ) {
         if batch.is_empty() {
@@ -2325,7 +2130,8 @@ impl<'r> InxRenderPass<'r> {
         }
 
         // Resolver target
-        let (color_attachments, depth_stencil_view) = if let Some(frame) = stack.last() {
+        let (color_attachment, depth_stencil_view, ctx_samples) = if let Some(frame) = stack.last()
+        {
             let first = composite_first_draw.last().copied().unwrap_or(false);
             if let Some(flag) = composite_first_draw.last_mut() {
                 *flag = false;
@@ -2338,91 +2144,30 @@ impl<'r> InxRenderPass<'r> {
             };
 
             (
-                vec![
-                    Some(RenderPassColorAttachment {
-                        view: &frame.entry.albedo_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: Operations {
-                            load,
-                            store: StoreOp::Store,
-                        },
-                    }),
-                    Some(RenderPassColorAttachment {
-                        view: &frame.entry.emissive_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: Operations {
-                            load: if first {
-                                LoadOp::Clear(LinearRgba::BLACK.into())
-                            } else {
-                                LoadOp::Load
-                            },
-                            store: StoreOp::Store,
-                        },
-                    }),
-                    Some(RenderPassColorAttachment {
-                        view: &frame.entry.bump_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: Operations {
-                            load,
-                            store: StoreOp::Store,
-                        },
-                    }),
-                ],
+                RenderPassColorAttachment {
+                    view: &frame.entry.albedo_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: Operations {
+                        load,
+                        store: StoreOp::Store,
+                    },
+                },
                 &frame.entry.depth_stencil_view,
+                1,
             )
         } else {
-            let is_first = *first_scene_draw;
-            *first_scene_draw = false;
-            let load = if is_first {
-                LoadOp::Clear(LinearRgba::NONE.into())
-            } else {
-                LoadOp::Load
-            };
             (
-                vec![
-                    Some(RenderPassColorAttachment {
-                        view: &self.scene_buffer.view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: Operations {
-                            load,
-                            store: StoreOp::Store,
-                        },
-                    }),
-                    Some(RenderPassColorAttachment {
-                        view: &self.scene_buffer.emissive_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: Operations {
-                            load: if is_first {
-                                LoadOp::Clear(LinearRgba::BLACK.into())
-                            } else {
-                                LoadOp::Load
-                            },
-                            store: StoreOp::Store,
-                        },
-                    }),
-                    Some(RenderPassColorAttachment {
-                        view: &self.scene_buffer.bump_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: Operations {
-                            load,
-                            store: StoreOp::Store,
-                        },
-                    }),
-                ],
+                self.view_target.get_color_attachment(),
                 &self.scene_buffer.depth_stencil_view,
+                self.samples,
             )
         };
 
         // UN solo render pass para todo el batch
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
             label: Some("inx_batched_parts"),
-            color_attachments: &color_attachments,
+            color_attachments: &[Some(color_attachment)],
             depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
                 view: depth_stencil_view,
                 depth_ops: None,
@@ -2451,7 +2196,10 @@ impl<'r> InxRenderPass<'r> {
 
         for &(part_idx, part) in batch {
             if current_blend != Some(part.blend_mode)
-                && let Some(&pid) = self.pipeline_resource.basic_pipeline.get(&part.blend_mode)
+                && let Some(&pid) = self
+                    .pipeline_resource
+                    .basic_pipeline
+                    .get(&(part.blend_mode, ctx_samples))
                 && let Some(pipe) = self.pipeline_cache.get_render_pipeline(pid)
             {
                 render_pass.set_render_pipeline(pipe);
@@ -2472,46 +2220,6 @@ impl<'r> InxRenderPass<'r> {
                 0..1,
             );
         }
-    }
-
-    /// Blit scene framebuffer - screen
-    fn blit_to_screen(
-        &self,
-        render_context: &mut RenderContext,
-        surface_attachments: &[Option<RenderPassColorAttachment<'r>>],
-    ) {
-        let sample_count = surface_attachments[0]
-            .as_ref()
-            .unwrap()
-            .view
-            .texture()
-            .sample_count();
-
-        let Some(&pid) = self.pipeline_resource.blit_pipeline.get(&sample_count) else {
-            return;
-        };
-
-        let Some(blit_pipeline) = self.pipeline_cache.get_render_pipeline(pid) else {
-            return;
-        };
-
-        let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
-            label: Some("inx_blit_to_screen"),
-            color_attachments: surface_attachments,
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        render_pass.set_render_pipeline(blit_pipeline);
-        render_pass.set_vertex_buffer(0, self.composite_pool.vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, self.composite_pool.uv_buffer.slice(..));
-        render_pass.set_index_buffer(
-            self.composite_pool.index_buffer.slice(..),
-            IndexFormat::Uint32,
-        );
-        render_pass.set_bind_group(0, &self.scene_buffer.bindgroup, &[]);
-        render_pass.draw_indexed(0..3, 0, 0..1);
     }
 
     // Agregar a impl InxRenderPass:
