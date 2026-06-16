@@ -119,50 +119,19 @@ pub fn update_animation_controller(
             layer_values.push((layer.weight, values));
         }
 
-        // Recolectar todos los param uuids tocados
-        let mut all_params: HashMap<u32, [f32; 2]> = HashMap::default();
-
-        // Empezar con defaults
-        for (&uuid, &defaults) in controller.param_defaults.iter() {
-            all_params.insert(uuid, defaults);
+        // Reset params animables a defaults; physics-only uuids (ausentes en
+        // param_defaults) quedan intactos en state.values.
+        for (&uuid, &default) in &controller.param_defaults {
+            state.values.insert(uuid, default);
         }
 
-        // Aplicar capas en orden (0 = menor prioridad, última = mayor)
+        // Blend capas activas encima de los defaults.
         for (weight, values) in &layer_values {
             for (&uuid, &layer_val) in values {
-                let current = all_params.entry(uuid).or_insert([0.0, 0.0]);
-                // Lerp entre valor actual y valor de esta capa, ponderado por weight
+                let current = state.values.entry(uuid).or_insert([0.0, 0.0]);
                 current[0] = lerp(current[0], layer_val[0], *weight);
                 current[1] = lerp(current[1], layer_val[1], *weight);
             }
-        }
-
-        state.values = all_params;
-
-        // NO reemplazar state.values entero (borraría physics).
-        // Solo sobreescribir params que las animaciones tocan.
-
-        // Recolectar todos los param UUIDs tocados por alguna capa
-        let mut touched: HashMap<u32, [f32; 2]> = HashMap::default();
-
-        for (weight, values) in &layer_values {
-            for (&uuid, &layer_val) in values {
-                let base = controller
-                    .param_defaults
-                    .get(&uuid)
-                    .copied()
-                    .unwrap_or([0.0, 0.0]);
-
-                let current = touched.entry(uuid).or_insert(base);
-                current[0] = lerp(current[0], layer_val[0], *weight);
-                current[1] = lerp(current[1], layer_val[1], *weight);
-            }
-        }
-
-        // Merge: sobreescribir solo params tocados, dejar el resto intacto
-        // (physics, tracking, etc. permanecen)
-        for (uuid, val) in touched {
-            state.values.insert(uuid, val);
         }
     }
 }
@@ -276,10 +245,8 @@ pub fn evaluate_params(
                 transform.translation.y = base.translation.y - offsets.ty;
                 transform.translation.z = base.translation.z + offsets.tz;
 
-                if offsets.sx != 1.0 || offsets.sy != 1.0 {
-                    transform.scale.x = base.scale.x * offsets.sx;
-                    transform.scale.y = base.scale.y * offsets.sy;
-                }
+                transform.scale.x = base.scale.x * offsets.sx;
+                transform.scale.y = base.scale.y * offsets.sy;
 
                 if offsets.rz.abs() > 1e-6 {
                     transform.rotation = base.rotation * Quat::from_rotation_z(-offsets.rz);

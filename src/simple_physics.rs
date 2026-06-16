@@ -9,7 +9,7 @@ use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
-use crate::{InxParamState, InxPuppet, InxPuppetRoot};
+use crate::{InxAnimationController, InxParamState, InxPuppet, InxPuppetRoot};
 
 /// Configuracion del nodo SimplePhysics (inmutable post-carga).
 #[derive(Component, Debug, Clone, Reflect)]
@@ -59,7 +59,7 @@ pub fn simple_physics_system(
     time: Res<Time>,
     mut physics_query: Query<(&InxSimplePhysics, &mut InxPhysicsState, &GlobalTransform)>,
     puppet_assets: Res<Assets<InxPuppet>>,
-    mut root_query: Query<(&InxPuppetRoot, &mut InxParamState)>,
+    mut root_query: Query<(&InxPuppetRoot, &mut InxParamState, Option<&InxAnimationController>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
     if dt <= 0.0 {
@@ -70,7 +70,7 @@ pub fn simple_physics_system(
     let ppm = root_query
         .iter()
         .next()
-        .and_then(|(root, _)| puppet_assets.get(&root.source))
+        .and_then(|(root, _, _)| puppet_assets.get(&root.source))
         .map(|p| p.physics.pixels_per_meter)
         .unwrap_or(1000.0);
 
@@ -98,11 +98,14 @@ pub fn simple_physics_system(
         // Si la animacion ya escribio este param (Forced), no "pisar".
         // Detectar: si el entry ya existe despues del clear() de animation,
         // significa que animation lo escribio = respetar.
-        for (_root, mut param_state) in root_query.iter_mut() {
-            // if param_state.values.contains_key(&config.param_uuid) {
-            //     // Animacion tiene prioridad (Forced)
-            //     continue;
-            // }
+        for (_root, mut param_state, controller) in root_query.iter_mut() {
+            let all_stopped = controller.map_or(false, |c| {
+                c.layers.iter().all(|l| !l.playing && l.weight < 0.001)
+            });
+            if all_stopped {
+                state.initialized = false;
+                continue;
+            }
             param_state.values.insert(config.param_uuid, [px, py]);
         }
 
