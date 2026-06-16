@@ -1,3 +1,10 @@
+//! Pendulum / spring-pendulum simulation for SimplePhysics nodes.
+//!
+//! Integrates the configured [`PhysicsModel`] each frame using the puppet's
+//! gravity and pixels-per-meter, then writes the result back into the
+//! linked param according to [`PhysicsMapMode`] so it feeds the regular
+//! binding pipeline.
+
 use std::f32::consts::PI;
 
 use bevy::prelude::*;

@@ -1,3 +1,9 @@
+//! Bevy plugin wiring: registers assets, loaders and update systems.
+//!
+//! [`Inochi2dPlugin`] installs the render pipeline plus the spawn/prop sync
+//! systems; [`InxAnimationPlugin`] adds the animation controller, param
+//! evaluation and simple-physics systems in the correct order.
+
 use bevy::prelude::*;
 
 use crate::{

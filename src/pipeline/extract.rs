@@ -1,3 +1,11 @@
+//! Main-world -> render-world extraction.
+//!
+//! Builds [`InxData`] (vertices, UVs, deforms, ordered draw commands and
+//! texture handles) and an [`InxExtractMap`] that records which main-world
+//! entity feeds each command on subsequent frames. The command list is
+//! rebuilt when the root's [`InxStructureVersion`] changes (props added,
+//! removed or reparented); otherwise only dynamic data is refreshed.
+
 use bevy::{
     camera::visibility::RenderLayers,
     platform::collections::HashMap,

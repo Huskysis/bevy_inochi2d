@@ -20,8 +20,24 @@ fn main() {
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn(Camera2d);
+    // UI controls
+    commands.spawn(
+        Node {
+            flex_direction: FlexDirection::Column,
+            ..Default::default()
+        }
+    ).with_children(|child| {
+        child.spawn(Text::new("Press W/A/S/D/ or Arrow Up/Left/Down/Right to move camera"));
+        child.spawn(Text::new("Press + / - to zoom camera"));
+        child.spawn(Text::new("Press Space to reset camera"));
+        child.spawn(Text::new("Press P to attach prop(Red squared)"));
+        child.spawn(Text::new("Press O to remove prop"));
+    });
 
+    // Camera
+    commands.spawn((Camera2d, Transform::from_translation(Vec3::new(0.0, 790.0, 0.0)),));
+
+    // Puppet
     let puppet: Handle<InxPuppet> = asset_server.load("Arch Chan.inr");
     commands.spawn(InxScene {
         puppet,
@@ -124,16 +140,16 @@ fn camera_controls(
     let zoom_speed = 1.0 * time.delta_secs();
 
     // Movement
-    if keyboard.pressed(KeyCode::KeyA) {
+    if keyboard.pressed(KeyCode::KeyA) | keyboard.pressed(KeyCode::ArrowLeft) {
         transform.translation.x -= speed;
     }
-    if keyboard.pressed(KeyCode::KeyD) {
+    if keyboard.pressed(KeyCode::KeyD) | keyboard.pressed(KeyCode::ArrowRight) {
         transform.translation.x += speed;
     }
-    if keyboard.pressed(KeyCode::KeyW) {
+    if keyboard.pressed(KeyCode::KeyW) | keyboard.pressed(KeyCode::ArrowUp) {
         transform.translation.y += speed;
     }
-    if keyboard.pressed(KeyCode::KeyS) {
+    if keyboard.pressed(KeyCode::KeyS) | keyboard.pressed(KeyCode::ArrowDown) {
         transform.translation.y -= speed;
     }
 

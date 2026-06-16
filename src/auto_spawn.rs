@@ -1,3 +1,10 @@
+//! Consumes [`InxScene`] command-components and spawns the puppet tree.
+//!
+//! Walks the loaded [`InxPuppet`] node hierarchy once the asset is ready,
+//! materializing one ECS entity per node with its transform, material,
+//! base pose, deform buffer and (when requested) animation controller,
+//! then propagates the parent's [`RenderLayers`] to every child.
+
 use bevy::{camera::visibility::RenderLayers, prelude::*};
 
 use crate::{

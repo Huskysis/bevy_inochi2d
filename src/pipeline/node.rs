@@ -1,3 +1,9 @@
+//! Render-graph view node that draws a puppet for one view.
+//!
+//! Iterates the extracted command list, sets pipelines/bind groups for
+//! parts, masks and composites, and respects [`RenderLayers`] so a given
+//! view only draws puppets whose layers intersect it.
+
 use bevy::{
     camera::visibility::RenderLayers,
     prelude::*,

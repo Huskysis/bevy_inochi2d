@@ -1,3 +1,9 @@
+//! Minimal puppet spawn example with animation playback and camera controls.
+//!
+//! Loads an `.inr` puppet, spawns it as an [`InxScene`], and on the first
+//! frame queues the puppet's animations into the [`InxAnimationController`]
+//! so playback starts immediately.
+
 use bevy::prelude::*;
 
 use bevy_inochi2d::prelude::*;
@@ -14,13 +20,27 @@ fn main() {
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    // UI controls
+    commands.spawn(
+        Node {
+            flex_direction: FlexDirection::Column,
+            ..Default::default()
+        }
+    ).with_children(|child| {
+        child.spawn(Text::new("Press W/A/S/D/ or Arrow Up/Left/Down/Right to move camera"));
+        child.spawn(Text::new("Press + / - to zoom camera"));
+        child.spawn(Text::new("Press Space to reset camera"));
+        child.spawn(Text::new("Press E to play animation"));
+        child.spawn(Text::new("Press Q to stop all animations"));
+    });
+
     // Camara
     commands.spawn((
         Camera2d::default(),
         Camera {
             ..Default::default()
         },
-        Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+        Transform::from_translation(Vec3::new(0.0, 790.0, 0.0)),
     ));
 
     // Cargar y spawnear puppet
@@ -31,7 +51,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         animation: true,
     });
 
-    println!("\n\nPress W/A/S/D to move camera");
+    println!("\n\nPress W/A/S/D/ or Arrow Up/Left/Down/Right to move camera");
     println!("Press + / - to zoom camera");
     println!("Press Space to reset camera");
     println!("Press Q to stop all animations");
@@ -71,16 +91,16 @@ fn camera_controls(
     let zoom_speed = 1.0 * time.delta_secs();
 
     // Movement
-    if keyboard.pressed(KeyCode::KeyA) {
+    if keyboard.pressed(KeyCode::KeyA) | keyboard.pressed(KeyCode::ArrowLeft) {
         transform.translation.x -= speed;
     }
-    if keyboard.pressed(KeyCode::KeyD) {
+    if keyboard.pressed(KeyCode::KeyD) | keyboard.pressed(KeyCode::ArrowRight) {
         transform.translation.x += speed;
     }
-    if keyboard.pressed(KeyCode::KeyW) {
+    if keyboard.pressed(KeyCode::KeyW) | keyboard.pressed(KeyCode::ArrowUp) {
         transform.translation.y += speed;
     }
-    if keyboard.pressed(KeyCode::KeyS) {
+    if keyboard.pressed(KeyCode::KeyS) | keyboard.pressed(KeyCode::ArrowDown) {
         transform.translation.y -= speed;
     }
 

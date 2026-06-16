@@ -1,3 +1,9 @@
+//! Render-world resource preparation.
+//!
+//! Allocates and uploads the per-puppet vertex / index / deform / uniform
+//! GPU buffers, builds the texture and view bind groups, prepares the
+//! offscreen composite targets and caches pipelines keyed by blend mode.
+
 use bevy::{
     asset::load_embedded_asset,
     mesh::VertexBufferLayout,

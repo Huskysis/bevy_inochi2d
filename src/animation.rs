@@ -1,3 +1,9 @@
+//! Multi-layer animation playback for puppets.
+//!
+//! Ticks each [`AnimationLayer`] on an [`InxAnimationController`], advances
+//! fade-in/out states, samples [`InxAnimationLane`] keyframes and writes the
+//! blended result into [`InxParamState`] for the param-evaluation pass.
+
 use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{

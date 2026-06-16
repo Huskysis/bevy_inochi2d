@@ -1,3 +1,14 @@
+//! Render-graph plugin for puppets.
+//!
+//! Loads the WGSL shader libraries, registers the per-view [`InxRenderViewNode`]
+//! inside `Core2d` after the main opaque pass, and schedules the
+//! extract/prepare systems split across the submodules:
+//!
+//! - [`extract`]: main-world -> render-world command list and dynamic data.
+//! - [`prepare`]: GPU buffers, bind groups, view uniforms and pipelines.
+//! - [`framebuffers`]: offscreen targets for composite layers.
+//! - [`node`]: the actual draw node executed by the render graph.
+
 use bevy::{
     core_pipeline::core_2d::graph::{Core2d, Node2d},
     prelude::*,

@@ -1,3 +1,12 @@
+//! Sampling helpers for parameter-driven binding grids.
+//!
+//! Each binding is a 1D or 2D grid indexed by the param's axis points; this
+//! module locates the surrounding cells, handles `is_set` sparsity by
+//! falling back to the nearest set corner, and blends with `lerp`,
+//! `ease_in_out` or `cubic_hermite` according to the binding's
+//! [`InxInterpolation`]. Used for both scalar (transform/opacity) and
+//! per-vertex (deform) bindings.
+
 use crate::*;
 
 /// Interpola un valor f32 de la grilla de un binding,

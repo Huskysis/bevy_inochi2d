@@ -1,3 +1,10 @@
+//! Offscreen color + depth/stencil targets for composite layers.
+//!
+//! A [`CompositeFramebufferEntry`] is allocated per composite nesting level
+//! and reused across frames; the render node draws children into the
+//! offscreen target and then samples it back through the composite bind
+//! group to blend onto the parent target.
+
 use bevy::{
     prelude::*,
     render::{

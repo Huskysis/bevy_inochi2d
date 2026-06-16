@@ -1,3 +1,14 @@
+//! Bevy integration for the Inochi2D puppet format.
+//!
+//! Loads `.inr` (and optional `.inx`/`.inp`) puppets as Bevy assets, drives
+//! per-vertex deformation from parameters and animations, and renders the
+//! result through a dedicated 2D render-graph node with masking and
+//! composite layers.
+//!
+//! Start from [`prelude`]: add [`plugin::Inochi2dPlugin`] and spawn an
+//! [`InxScene`] pointing at a loaded [`InxPuppet`]. Attach [`InxProp`] to
+//! any node entity to draw external sprites inside the puppet's z-sort.
+
 pub mod animation;
 pub mod auto_spawn;
 pub mod grid_interpolation;

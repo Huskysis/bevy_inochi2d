@@ -1,3 +1,10 @@
+//! Asset loader for legacy `.inx` / `.inp` puppets (feature `inx`).
+//!
+//! Parses via `inochi2d_parser::owned`, converts UUID-referenced nodes,
+//! params, animations and textures into the engine-side [`InxPuppet`]
+//! representation, and decodes embedded images as straight-alpha sRGB to
+//! match the INR path.
+
 use std::io;
 
 use bevy::{
