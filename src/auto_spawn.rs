@@ -161,6 +161,7 @@ fn spawn_node_recursive(
                     length_damping: phys.length_damping,
                     output_scale: phys.output_scale,
                     local_only: phys.local_only,
+                    enabled: true,
                 },
                 InxPhysicsState::default(),
                 GlobalTransform::default(),

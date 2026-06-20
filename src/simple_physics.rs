@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use crate::{InxAnimationController, InxParamState, InxPuppet, InxPuppetRoot};
 
-/// Configuracion del nodo SimplePhysics (inmutable post-carga).
+/// SimplePhysics node config (immutable after load).
 #[derive(Component, Debug, Clone, Reflect)]
 pub struct InxSimplePhysics {
     pub param_uuid: u32,
@@ -24,6 +24,18 @@ pub struct InxSimplePhysics {
     pub length_damping: f32,
     pub output_scale: [f32; 2],
     pub local_only: bool,
+    /// Pauses this physics node. State is reset on resume.
+    pub enabled: bool,
+}
+
+/// Pauses all SimplePhysics simulations when false.
+#[derive(Resource, Debug, Clone, Copy, Reflect)]
+pub struct PhysicsEnabled(pub bool);
+
+impl Default for PhysicsEnabled {
+    fn default() -> Self {
+        Self(true)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Reflect)]
@@ -40,8 +52,8 @@ pub enum PhysicsMapMode {
     YX,
 }
 
-/// Estado mutable de la simulacion (por instancia).
-#[derive(Component, Debug, Default)]
+/// Per-instance mutable simulation state.
+#[derive(Component, Debug, Default, Reflect)]
 pub struct InxPhysicsState {
     bob: Vec2,
     velocity: Vec2,
@@ -49,14 +61,14 @@ pub struct InxPhysicsState {
     initialized: bool,
 }
 
-// Flujo:
-// anchor (globalt del nodo) se mueve porque su padre (head) se mueve
-// - bob experimenta inercia (spring-damper)
-// - displacement bob-anchor se mapea al param de salida
-// - evaluate_params aplica los bindings del param al pelo/ojos/etc.
-
+// Flow:
+// - anchor (node's global transform) moves because its parent (e.g. head) moves
+// - bob lags behind via spring-damper inertia
+// - (bob - anchor) is mapped to the output param
+// - evaluate_params then applies the param bindings to hair/eyes/etc.
 pub fn simple_physics_system(
     time: Res<Time>,
+    enabled: Option<Res<PhysicsEnabled>>,
     mut physics_query: Query<(&InxSimplePhysics, &mut InxPhysicsState, &GlobalTransform)>,
     puppet_assets: Res<Assets<InxPuppet>>,
     mut root_query: Query<(&InxPuppetRoot, &mut InxParamState, Option<&InxAnimationController>)>,
@@ -66,7 +78,9 @@ pub fn simple_physics_system(
         return;
     }
 
-    // Obtener ppm del primer puppet (TODO: multi-puppet)
+    let global_on = enabled.map_or(true, |e| e.0);
+
+    // Pull pixels-per-meter from the first puppet (TODO: multi-puppet).
     let ppm = root_query
         .iter()
         .next()
@@ -75,11 +89,18 @@ pub fn simple_physics_system(
         .unwrap_or(1000.0);
 
     for (config, mut state, gtf) in physics_query.iter_mut() {
+        // Global or per-node pause: reset state, skip param write.
+        // Param falls back to default via animation's `param_defaults`.
+        if !global_on || !config.enabled {
+            state.initialized = false;
+            continue;
+        }
+
         let anchor = gtf.translation().truncate();
 
         if !state.initialized {
-            // Bob en reposo: directamente debajo del anchor
-            // En Bevy (+Y = arriba), "debajo" = Y negativo
+            // Rest pose: bob hangs straight below the anchor.
+            // Bevy uses +Y up, so "below" means -Y.
             state.bob = anchor + Vec2::new(0.0, -config.length);
             state.prev_anchor = anchor;
             state.velocity = Vec2::ZERO;
@@ -87,25 +108,12 @@ pub fn simple_physics_system(
             continue;
         }
 
-        // Simular
         simulate(config, &mut state, anchor, dt, ppm);
 
-        // Mapear a param
         let diff = state.bob - anchor;
         let (px, py) = map_output(config, diff);
 
-        // Escribir al param state del puppet
-        // Si la animacion ya escribio este param (Forced), no "pisar".
-        // Detectar: si el entry ya existe despues del clear() de animation,
-        // significa que animation lo escribio = respetar.
-        for (_root, mut param_state, controller) in root_query.iter_mut() {
-            let all_stopped = controller.map_or(false, |c| {
-                c.layers.iter().all(|l| !l.playing && l.weight < 0.001)
-            });
-            if all_stopped {
-                state.initialized = false;
-                continue;
-            }
+        for (_root, mut param_state, _controller) in root_query.iter_mut() {
             param_state.values.insert(config.param_uuid, [px, py]);
         }
 
@@ -120,21 +128,26 @@ fn simulate(
     dt: f32,
     ppm: f32,
 ) {
-    let k = (2.0 * PI * config.frequency).powi(2);
+    // Natural angular frequency of the spring (rad/s).
+    let omega = 2.0 * PI * config.frequency;
+    let k = omega * omega;
 
-    // Posicion de reposo (colgando debajo)
+    // Rest position: straight below the anchor.
     let rest = anchor + Vec2::new(0.0, -config.length);
 
-    // Spring: tira el bob hacia rest
+    // Spring force pulls bob toward rest.
     let spring = (rest - state.bob) * k;
 
-    // Gravedad: hacia abajo (Y negativo en Bevy)
-    let gravity = Vec2::new(0.0, config.gravity * ppm);
+    // Gravity (sign matches puppet convention; inverted by the loader if needed).
+    let gravity = Vec2::new(0.0, -config.gravity * ppm);
 
-    // Integrar velocidad
+    // Semi-implicit Euler: integrate velocity first, then position.
     state.velocity += (spring + gravity) * dt;
 
-    // Amortiguacion en coordenadas polares respecto al anchor
+    // Damping in polar coords relative to the anchor.
+    // Use exponential decay tied to natural frequency: critically damped at
+    // ratio = 1. Stable for any dt and consistent with a damped harmonic
+    // oscillator, instead of the framerate-dependent (1 - damping) per frame.
     let to_bob = state.bob - anchor;
     let dist = to_bob.length();
 
@@ -142,23 +155,26 @@ fn simulate(
         let radial = to_bob / dist;
         let tangent = Vec2::new(-radial.y, radial.x);
 
-        let vr = state.velocity.dot(radial) * (1.0 - config.length_damping);
-        let vt = state.velocity.dot(tangent) * (1.0 - config.angle_damping);
+        let decay_r = (-2.0 * config.length_damping * omega * dt).exp();
+        let decay_t = (-2.0 * config.angle_damping * omega * dt).exp();
+
+        let vr = state.velocity.dot(radial) * decay_r;
+        let vt = state.velocity.dot(tangent) * decay_t;
 
         state.velocity = radial * vr + tangent * vt;
     }
 
-    // Integrar posicion
+    // Integrate position with the (now damped) velocity.
     state.bob += state.velocity * dt;
 
-    // Pendulum: constraint de longitud fija
+    // Pendulum model: hard length constraint.
     if config.model == PhysicsModel::Pendulum {
         let to_bob = state.bob - anchor;
         let d = to_bob.length();
         if d > 0.001 {
             let dir = to_bob / d;
             state.bob = anchor + dir * config.length;
-            // Eliminar velocidad radial
+            // Project out radial velocity component.
             state.velocity -= dir * state.velocity.dot(dir);
         }
     }
@@ -171,7 +187,7 @@ fn map_output(config: &InxSimplePhysics, diff: Vec2) -> (f32, f32) {
 
     match config.map_mode {
         PhysicsMapMode::AngleLength => {
-            // Angulo desde la vertical (reposo = straight down = -Y)
+            // Angle from vertical (rest = straight down = -Y).
             let angle = diff.x.atan2(-diff.y);
             let extension = (diff.length() - len) / len;
             (angle * sx, extension * sy)
@@ -182,8 +198,8 @@ fn map_output(config: &InxSimplePhysics, diff: Vec2) -> (f32, f32) {
             (extension * sx, angle * sy)
         }
         PhysicsMapMode::XY => {
-            // Normalizado por longitud.
-            // diff.y en reposo = -length => (-(-len)/len - 1.0) = 0
+            // Normalized by rest length.
+            // At rest diff.y = -length, so ny = -(-len)/len - 1 = 0.
             let nx = diff.x / len;
             let ny = -diff.y / len - 1.0;
             (nx * sx, ny * sy)

@@ -13,7 +13,7 @@ use crate::{
     sync_props,
     inr_loader::InrLoader,
     pipeline::InxRenderPipeline,
-    simple_physics::simple_physics_system,
+    simple_physics::{PhysicsEnabled, simple_physics_system},
 };
 
 pub struct Inochi2dPlugin;
@@ -41,11 +41,11 @@ pub struct InxAnimationPlugin;
 
 impl Plugin for InxAnimationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<PhysicsEnabled>().add_systems(
             Update,
             (
-                simple_physics_system,
                 update_animation_controller,
+                simple_physics_system,
                 evaluate_params,
             )
                 .chain(),

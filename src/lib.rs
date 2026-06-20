@@ -818,10 +818,6 @@ pub struct InxAnimationController {
     /// Se inicializa con los defaults del puppet al spawnear.
     #[reflect(ignore)]
     pub param_defaults: HashMap<u32, [f32; 2]>,
-
-    /// Señal para que `simple_physics_system` reinicie su estado interno.
-    /// Se activa al llamar `stop_all()`; el sistema lo consume y lo pone a `false`.
-    pub reset_physics: bool,
 }
 
 #[derive(Debug, Clone, Reflect)]
@@ -861,7 +857,6 @@ impl InxAnimationController {
         Self {
             layers: Vec::new(),
             param_defaults: HashMap::default(),
-            reset_physics: false,
         }
     }
 
@@ -1008,8 +1003,6 @@ impl InxAnimationController {
             layer.playing = false;
             layer.weight = 0.0;
         }
-
-        self.reset_physics = true;
     }
 }
 
