@@ -214,10 +214,10 @@ impl Default for InxProp {
 #[derive(Debug, Clone, Copy, Default, Component, Reflect)]
 pub struct InxStructureVersion(pub u32);
 
-static NEXT_PROP_UUID: std::sync::atomic::AtomicU32 =
+pub(crate) static NEXT_PROP_UUID: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0x8000_0000);
 
-fn root_of(mut entity: Entity, parents: &Query<&ChildOf>) -> Entity {
+pub(crate) fn root_of(mut entity: Entity, parents: &Query<&ChildOf>) -> Entity {
     while let Ok(child_of) = parents.get(entity) {
         entity = child_of.parent();
     }

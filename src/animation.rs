@@ -176,18 +176,20 @@ fn evaluate_lane(lane: &InxAnimationLane, frame: f32) -> f32 {
 }
 
 pub fn evaluate_params(
-    puppet_query: Query<(&InxParamState, &InxPuppetRoot)>,
+    puppet_query: Query<(Entity, &InxParamState, &InxPuppetRoot)>,
     puppet_assets: Res<Assets<InxPuppet>>,
     param_assets: Res<Assets<InxParam>>,
     mut node_query: Query<(
+        Entity,
         &InxUUID,
         &InxBasePose,
         &mut Transform,
         Option<&mut InxMaterial>,
         Option<&mut InxDeform>,
     )>,
+    parents: Query<&ChildOf>,
 ) {
-    for (state, root) in puppet_query.iter() {
+    for (root_entity, state, root) in puppet_query.iter() {
         let Some(puppet) = puppet_assets.get(&root.source) else {
             continue;
         };
@@ -239,7 +241,15 @@ pub fn evaluate_params(
             }
         }
 
-        for (uuid, base, mut transform, material, deform) in node_query.iter_mut() {
+        for (node_entity, uuid, base, mut transform, material, deform) in node_query.iter_mut() {
+            // Scope to this puppet's own subtree: with multiple puppets in
+            // scene, a node not owned by `root_entity` must not be touched
+            // by this iteration's accumulators (cross-puppet UUID collisions
+            // would zero or cross-wire another puppet's deforms).
+            if crate::root_of(node_entity, &parents) != root_entity {
+                continue;
+            }
+
             if let Some(offsets) = transform_accum.get(&uuid.0) {
                 transform.translation.x = base.translation.x + offsets.tx;
                 transform.translation.y = base.translation.y - offsets.ty;

@@ -38,13 +38,30 @@ pub fn spawn_scene_system(
         // Spawnear árbol recursivamente
         let root_entity = spawn_node_recursive(&mut commands, root_node, scene.transform);
 
-        // Marcar raiz con componentes de puppet
-        commands.entity(root_entity).insert((
-            InxPuppetRoot {
-                source: scene.puppet.clone(),
-            },
-            scene.transform,
-        ));
+        // Scene transform lives on a wrapper parent, NOT on the puppet's root
+        // node: `evaluate_params` rewrites any bound node's Transform as
+        // base_pose + offset each frame, so a scene offset placed on the root
+        // node is silently destroyed when the model binds params to its root.
+        // The wrapper is a full Generic node (fresh unique uuid, zsort 0) so
+        // the ViewNode extractor still finds a root matching
+        // `(With<InxUUID>, Without<ChildOf>)` and walks into the real tree.
+        let wrapper = commands
+            .spawn((
+                InxPuppetRoot {
+                    source: scene.puppet.clone(),
+                },
+                InxUUID(
+                    crate::NEXT_PROP_UUID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                ),
+                InxZSort(0.0),
+                InxNodeType::Generic,
+                scene.transform,
+                Visibility::Visible,
+                Name::new("InxScene Root"),
+            ))
+            .id();
+        commands.entity(wrapper).add_child(root_entity);
+        let root_entity = wrapper;
 
         // Propagate RenderLayers from the command entity to the puppet root
         // (the command entity is despawned below).

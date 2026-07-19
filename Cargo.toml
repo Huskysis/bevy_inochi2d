@@ -16,7 +16,7 @@ default = []
 inx = ["dep:bevy_image"]
 
 [dependencies]
-inochi2d-parser = { version = "0.2.1", features = ["inr"] }
+inochi2d-parser = { version = "0.2.2", features = ["inr"] }
 thiserror = { version = "2", default-features = false }
 bytemuck = { version = "1.14", features = ["derive"] }
 

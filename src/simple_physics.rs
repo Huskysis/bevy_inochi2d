@@ -69,9 +69,16 @@ pub struct InxPhysicsState {
 pub fn simple_physics_system(
     time: Res<Time>,
     enabled: Option<Res<PhysicsEnabled>>,
-    mut physics_query: Query<(&InxSimplePhysics, &mut InxPhysicsState, &GlobalTransform)>,
+    mut physics_query: Query<(
+        Entity,
+        &InxSimplePhysics,
+        &mut InxPhysicsState,
+        &Transform,
+        &GlobalTransform,
+    )>,
     puppet_assets: Res<Assets<InxPuppet>>,
     mut root_query: Query<(&InxPuppetRoot, &mut InxParamState, Option<&InxAnimationController>)>,
+    parents: Query<&ChildOf>,
 ) {
     let dt = time.delta_secs().min(0.05);
     if dt <= 0.0 {
@@ -80,15 +87,7 @@ pub fn simple_physics_system(
 
     let global_on = enabled.map_or(true, |e| e.0);
 
-    // Pull pixels-per-meter from the first puppet (TODO: multi-puppet).
-    let ppm = root_query
-        .iter()
-        .next()
-        .and_then(|(root, _, _)| puppet_assets.get(&root.source))
-        .map(|p| p.physics.pixels_per_meter)
-        .unwrap_or(1000.0);
-
-    for (config, mut state, gtf) in physics_query.iter_mut() {
+    for (entity, config, mut state, transform, gtf) in physics_query.iter_mut() {
         // Global or per-node pause: reset state, skip param write.
         // Param falls back to default via animation's `param_defaults`.
         if !global_on || !config.enabled {
@@ -96,7 +95,27 @@ pub fn simple_physics_system(
             continue;
         }
 
-        let anchor = gtf.translation().truncate();
+        // Resolve the owning puppet's root: ppm comes from and the output
+        // param is written to THIS puppet only (a second puppet in scene
+        // must not receive another puppet's physics output).
+        let root = crate::root_of(entity, &parents);
+        let Ok((puppet_root, mut param_state, _controller)) = root_query.get_mut(root) else {
+            continue;
+        };
+        let ppm = puppet_assets
+            .get(&puppet_root.source)
+            .map(|p| p.physics.pixels_per_meter)
+            .unwrap_or(1000.0);
+
+        // `local_only`: anchor tracks the node's own Transform (relative to
+        // its immediate parent) instead of GlobalTransform, so the sim isn't
+        // dragged by ancestor rotation/scale/scene offset. Previously parsed
+        // and stored but never read.
+        let anchor = if config.local_only {
+            transform.translation.truncate()
+        } else {
+            gtf.translation().truncate()
+        };
 
         if !state.initialized {
             // Rest pose: bob hangs straight below the anchor.
@@ -113,9 +132,9 @@ pub fn simple_physics_system(
         let diff = state.bob - anchor;
         let (px, py) = map_output(config, diff);
 
-        for (_root, mut param_state, _controller) in root_query.iter_mut() {
-            param_state.values.insert(config.param_uuid, [px, py]);
-        }
+        // Write ONLY to the owning puppet's param state (previously
+        // propagated to every root in the scene).
+        param_state.values.insert(config.param_uuid, [px, py]);
 
         state.prev_anchor = anchor;
     }
