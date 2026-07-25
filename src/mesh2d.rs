@@ -912,10 +912,21 @@ pub fn sync_mask_clipping(
             .map(|p| uv_for_point(*p, &local, &inx_mesh.uv_buffer, &inx_mesh.index_buffer))
             .collect();
 
+        // A part whose masks cover it entirely clips away to nothing. Writing empty
+        // buffers would leave the mesh with no GPU allocation while still being
+        // uploaded every frame, so stand in a zero-area triangle: it keeps both
+        // buffers allocated and rasterizes to no fragments. The real geometry comes
+        // back on the next frame the part is no longer fully covered.
+        let (positions, uvs, indices) = if positions.is_empty() || tri.indices.is_empty() {
+            (vec![[0.0, 0.0, 0.0]; 3], vec![[0.0, 0.0]; 3], vec![0, 1, 2])
+        } else {
+            (positions, uvs, tri.indices)
+        };
+
         if let Some(mesh) = meshes.get_mut(&mesh2d.0) {
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-            mesh.insert_indices(Indices::U32(tri.indices));
+            mesh.insert_indices(Indices::U32(indices));
         }
     }
 }
