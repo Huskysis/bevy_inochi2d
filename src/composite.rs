@@ -753,11 +753,13 @@ pub fn queue_composite_views(
                 physical_target_size: Some(UVec2::splat(c.rt_side)),
                 viewport: None,
                 schedule: InxCompositeViewSchedule.intern(),
-                // Distinct per view: Bevy warns about ambiguous camera order when two
-                // active cameras share an (order, target) pair, and these all share the
-                // same empty target. The value itself is inert - the schedule they point
-                // at does nothing.
-                order: index as isize,
+                // Distinct per view, far from the orders scene cameras use.
+                // Bevy warns when two active cameras share (order, target).
+                // These views all carry the same empty target.
+                // A scene camera's target goes empty when its window closes.
+                // Orders near zero would collide with it during shutdown.
+                // Inert value: the schedule they point at does nothing.
+                order: isize::MIN + index as isize,
                 output_mode: CameraOutputMode::Skip,
                 msaa_writeback: MsaaWriteback::Off,
                 clear_color: ClearColorConfig::None,
