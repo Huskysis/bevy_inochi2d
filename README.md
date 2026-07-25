@@ -43,7 +43,7 @@ only runs once per unique asset regardless of how many puppets reference it.
 
 ```toml
 # INX/INP support is opt-in:
-bevy_inochi2d = { version = "0.4", features = ["inx"] }
+bevy_inochi2d = { version = "0.5", features = ["inx"] }
 ```
 
 ## ✦ Features
@@ -58,13 +58,14 @@ bevy_inochi2d = { version = "0.4", features = ["inx"] }
 ✦ **Scene spawn**: `InxScene` component to spawn a puppet automatically; `default_pose: true` resolves params to their authored defaults without needing `InxAnimationPlugin`'s full loop.  
 ✦ **Props (pseudo-sprites)**: `InxProp` attaches external textured quads to puppet nodes - a regular `Mesh2d`/`Sprite`, z-ordered between parts natively (e.g. an item in the hand).  
 ✦ **Render to texture**: Works with Bevy's standard `RenderTarget::Image` and `RenderLayers` - render a puppet offscreen and use the result anywhere (UI, sprites, 3D).  
+✦ **Compositing space**: Parts and composite render targets follow the camera's `CompositingSpace`, so a puppet blends the same way the rest of the scene does. Opt-in and inert by default: without the component on the camera, blending stays linear.  
 ✦ **MeshGroup deform**: child parts warp through the group's lattice, matching upstream's per-group `dynamic_deformation` (runtime re-warp vs rest-pose additive) and `propagateMeshGroup` (a non-propagating Composite acts as a warp barrier).
 
 ## ✦ Usage example
 
 ```toml
 [dependencies]
-bevy_inochi2d = "0.4"
+bevy_inochi2d = "0.5"
 ```
 
 ```rust
@@ -119,7 +120,8 @@ in 0.3.x).
 
 | bevy_inochi2d | Bevy | Renderer |
 | ------------- | ---- | -------- |
-| 0.4           | 0.18 | Native `Mesh2d`/`Material2d` (this branch) |
+| 0.5           | 0.19 | Native `Mesh2d`/`Material2d` (this branch) |
+| 0.4           | 0.18 | Native `Mesh2d`/`Material2d` |
 
 **Note:** Since Bevy 0.18 the `2d` feature collection officially supports bringing your own 2D renderer, which is exactly what this plugin does.
 
