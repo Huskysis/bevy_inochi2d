@@ -1,6 +1,6 @@
 [package]
 name = "bevy_inochi2d"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 description = "Renderizador independiente de Inochi2D impulsado por el backend wgpu de Bevy"
 repository = "https://github.com/Huskysis/bevy_inochi2d"
@@ -26,7 +26,7 @@ i_overlay = "7.0.0"
 i_triangle = "0.45.0"
 
 [dependencies.bevy]
-version = "0.18"
+version = "0.19"
 default-features = false
 features = [
     "bevy_core_pipeline",
@@ -40,5 +40,5 @@ features = [
 
 
 [dev-dependencies]
-bevy = "0.18"
+bevy = "0.19"
 image = { version = "0.25", default-features = false, features = ["png"] }

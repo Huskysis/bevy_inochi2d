@@ -16,7 +16,13 @@ use bevy_inochi2d::{InxProp, InxZSort, prelude::*};
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "bevy_inochi2d - prop".into(),
+                ..default()
+            }),
+            ..default()
+        }))
         .add_plugins(Inochi2dPlugin)
         .add_systems(Startup, setup)
         .add_systems(Update, (list_nodes_once, toggle_prop, change_zsort_prop))

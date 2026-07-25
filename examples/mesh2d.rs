@@ -16,6 +16,12 @@ fn main() {
         .add_plugins(DefaultPlugins.set(bevy::log::LogPlugin {
             level: bevy::log::Level::WARN,
             ..default()
+        }).set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "bevy_inochi2d - mesh2d".into(),
+                ..default()
+            }),
+            ..default()
         }))
 
         .add_plugins(Inochi2dPlugin)

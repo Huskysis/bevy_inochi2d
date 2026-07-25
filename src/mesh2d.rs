@@ -29,16 +29,15 @@ use crate::{
     BlendMode, InxDeform, InxMaskMode, InxMaterial, InxNodeType, InxPuppetRoot, InxUUID,
     InxZSort,
     composite::{
-        ComposeMode, CompositePassNode, InComposite, InxCompositeGroup, InxCompositePassLabel,
-        InxCompositeQuad, acquire_composite_rts, extract_composites, queue_composite_views,
-        update_composite_bbox,
+        ComposeMode, InComposite, InxCompositeGroup, InxCompositeQuad, acquire_composite_rts,
+        composite_pass, extract_composites, queue_composite_views, update_composite_bbox,
     },
     plugin::Inochi2dCorePlugin,
 };
 
-use bevy::{
-    core_pipeline::core_2d::graph::{Core2d, Node2d},
-    render::{Render, RenderSystems, ExtractSchedule, RenderApp, render_graph::RenderGraphExt},
+use bevy::render::{
+    ExtractSchedule, Render, RenderApp, RenderSystems,
+    renderer::{RenderGraph, RenderGraphSystems},
 };
 
 /// The Mesh2d/Material2d renderer. Adds [`Inochi2dCorePlugin`] itself if not already
@@ -105,20 +104,32 @@ impl Plugin for InxMesh2dPlugin {
                     (
                         extract_composites,
                         // After Bevy's phase extraction: its retain() only keeps
-                        // camera views and would drop our phases.
+                        // camera views and would drop our phases. Also after the
+                        // dirty-specialization clear, so marking our view dirty sticks.
                         queue_composite_views
-                            .after(bevy::core_pipeline::core_2d::extract_core_2d_camera_phases),
+                            .after(bevy::core_pipeline::core_2d::extract_core_2d_camera_phases)
+                            .after(bevy::render::camera::DirtySpecializationSystems::Clear),
                     )
                         .chain(),
                 )
                 .init_resource::<crate::composite::CompositeDepthTextures>()
+                .add_schedule(bevy::ecs::schedule::Schedule::new(
+                    crate::composite::InxCompositeViewSchedule,
+                ))
                 .add_systems(
                     Render,
                     crate::composite::prepare_composite_depth_textures
                         .in_set(RenderSystems::PrepareResources),
                 )
-                .add_render_graph_node::<CompositePassNode>(Core2d, InxCompositePassLabel)
-                .add_render_graph_edges(Core2d, (InxCompositePassLabel, Node2d::StartMainPass));
+                // Once per frame in the root render schedule, before the camera
+                // schedules run: composite RTs must be filled before the main 2D
+                // pass draws the quads that sample them.
+                .add_systems(
+                    RenderGraph,
+                    composite_pass
+                        .in_set(RenderGraphSystems::Render)
+                        .before(bevy::core_pipeline::schedule::camera_driver),
+                );
         }
     }
 }
@@ -378,7 +389,7 @@ pub fn sync_composite_quads(
             Transform::from_translation(Vec3::new(center.x, center.y, z))
                 .with_scale(Vec3::new(size.x, size.y, 1.0)),
         );
-        if let Some(mat) = materials.get_mut(&material.0) {
+        if let Some(mut mat) = materials.get_mut(&material.0) {
             if mat.albedo != bbox.rt {
                 mat.albedo = bbox.rt.clone();
             }
@@ -539,7 +550,7 @@ pub fn sync_part_deforms(mut meshes: ResMut<Assets<Mesh>>, parts: DeformedUnmask
         let Some(positions) = part_positions(mat, Some(deform)) else {
             continue;
         };
-        if let Some(mesh) = meshes.get_mut(&mesh2d.0) {
+        if let Some(mut mesh) = meshes.get_mut(&mesh2d.0) {
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
         }
     }
@@ -893,7 +904,7 @@ pub fn sync_mask_clipping(
             if subj_area > 0.0 && clipped_area / subj_area >= 0.95 {
                 // Still owns the mesh rebuild: restore the FULL deformed geometry
                 // (sync_part_deforms skips masked parts, and the mesh may hold a clipped build from a previous frame).
-                if let Some(mesh) = meshes.get_mut(&mesh2d.0) {
+                if let Some(mut mesh) = meshes.get_mut(&mesh2d.0) {
                     let positions: Vec<[f32; 3]> =
                         local.iter().map(|p| [p[0], p[1], 0.0]).collect();
                     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
@@ -923,7 +934,7 @@ pub fn sync_mask_clipping(
             (positions, uvs, tri.indices)
         };
 
-        if let Some(mesh) = meshes.get_mut(&mesh2d.0) {
+        if let Some(mut mesh) = meshes.get_mut(&mesh2d.0) {
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
             mesh.insert_indices(Indices::U32(indices));
@@ -954,7 +965,7 @@ pub fn sync_part_materials(
         }
         let group = per_child_blend_group(member, &groups);
         let (data, _) = part_material_values(mat, group);
-        if let Some(material) = materials.get_mut(&handle.0) {
+        if let Some(mut material) = materials.get_mut(&handle.0) {
             material.data = data;
         }
     }
