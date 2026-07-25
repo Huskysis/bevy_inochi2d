@@ -13,7 +13,13 @@ use bevy_inochi2d::{
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "bevy_inochi2d - basic".into(),
+                ..default()
+            }),
+            ..default()
+        }))
         .add_plugins(Inochi2dPlugin)
         .add_plugins(Inochi2dAnimationPlugin)
         .add_systems(Startup, setup)
