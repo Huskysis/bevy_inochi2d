@@ -56,6 +56,9 @@ pub struct CompositeRtPool {
     free: HashMap<u32, Vec<Handle<Image>>>,
     in_flight: Vec<(Handle<Image>, u32)>,
     warned_oversize: bool,
+    /// Compositing space the pooled textures were created for. Pooled handles are
+    /// dropped when it changes, since it decides their format.
+    srgb_compositing: bool,
 }
 
 impl CompositeRtPool {
@@ -79,13 +82,28 @@ impl CompositeRtPool {
     /// handle remains in flight until `release_frame` is called.
     pub fn acquire(&mut self, side: u32, images: &mut Assets<Image>) -> Handle<Image> {
         let bucket = self.bucket_for(side);
+        let srgb = self.srgb_compositing;
         let handle = self
             .free
             .get_mut(&bucket)
             .and_then(|v| v.pop())
-            .unwrap_or_else(|| images.add(make_rt(bucket)));
+            .unwrap_or_else(|| images.add(make_rt(bucket, srgb)));
         self.in_flight.push((handle.clone(), bucket));
         handle
+    }
+
+    /// Set the compositing space the pool creates textures for, dropping pooled
+    /// handles when it changes so no texture outlives its format.
+    pub fn set_srgb_compositing(&mut self, srgb: bool) {
+        if self.srgb_compositing != srgb {
+            self.srgb_compositing = srgb;
+            self.free.clear();
+        }
+    }
+
+    /// Texture format the pool currently hands out.
+    pub fn format(&self) -> TextureFormat {
+        rt_format(self.srgb_compositing)
     }
 
     /// Move every in-flight handle back to its bucket. Call once per frame after the
@@ -97,7 +115,26 @@ impl CompositeRtPool {
     }
 }
 
-fn make_rt(side: u32) -> Image {
+/// Whether a camera's compositing space means gamma-encoded blending.
+///
+/// Composite RTs and their synthetic views follow the camera so a composite blends the
+/// same way the rest of the scene does. With several cameras the first one decides.
+fn scene_srgb_compositing(space: Option<&bevy::camera::CompositingSpace>) -> bool {
+    matches!(space, Some(bevy::camera::CompositingSpace::Srgb))
+}
+
+/// RT format for a compositing space. Gamma-encoded compositing stores already-encoded
+/// values, so it needs a non-sRGB format: an sRGB view would encode them a second time
+/// on write.
+fn rt_format(srgb_compositing: bool) -> TextureFormat {
+    if srgb_compositing {
+        TextureFormat::Rgba8Unorm
+    } else {
+        TextureFormat::Rgba8UnormSrgb
+    }
+}
+
+fn make_rt(side: u32, srgb_compositing: bool) -> Image {
     let size = Extent3d {
         width: side,
         height: side,
@@ -107,7 +144,7 @@ fn make_rt(side: u32) -> Image {
         size,
         TextureDimension::D2,
         &[0, 0, 0, 0],
-        TextureFormat::Rgba8UnormSrgb,
+        rt_format(srgb_compositing),
         RenderAssetUsages::default(),
     );
     // COPY_SRC enables debug readback (RT dump via bevy::render::gpu_readback).
@@ -415,8 +452,10 @@ pub fn acquire_composite_rts(
     mut pool: ResMut<CompositeRtPool>,
     mut images: ResMut<Assets<Image>>,
     mut groups: Query<(Entity, &ComposeMode, &mut InxCompositeBbox, Option<&Name>)>,
+    cameras: Query<Option<&bevy::camera::CompositingSpace>, With<Camera>>,
     mut last_bucket: Local<HashMap<Entity, u32>>,
 ) {
+    pool.set_srgb_compositing(scene_srgb_compositing(cameras.iter().next().flatten()));
     pool.release_frame();
     for (entity, mode, mut bbox, name) in &mut groups {
         if *mode != ComposeMode::NeedsRt {
@@ -553,7 +592,7 @@ pub fn extract_composites(
     }
     // Deepest-first: a nested NeedsRt composite's RT must be rendered before any
     // ancestor composite's pass samples it through the nested quad.
-    extracted.0.sort_by(|a, b| b.depth.cmp(&a.depth));
+    extracted.0.sort_by_key(|c| std::cmp::Reverse(c.depth));
 }
 
 /// Marker on the final quad that draws a `NeedsRt` composite's RT into the main
@@ -596,6 +635,7 @@ pub struct InxCompositeViewSchedule;
 /// Bevy's `prepare_view_uniforms` then writes view uniforms for it like for any
 /// camera view, and the standard specialize/queue/batch systems fill the
 /// Transparent2d phase that [`CompositePassNode`] renders.
+#[allow(clippy::too_many_arguments)] // Bevy system: each phase resource is its own param
 pub fn queue_composite_views(
     mut commands: Commands,
     mut views: ResMut<CompositeViewEntities>,
@@ -614,6 +654,7 @@ pub fn queue_composite_views(
         >,
     >,
     mut dirty_specializations: ResMut<bevy::render::camera::DirtySpecializations>,
+    scene_cameras: Extract<Query<Option<&bevy::camera::CompositingSpace>, With<Camera>>>,
 ) {
     use bevy::camera::{CameraOutputMode, ClearColorConfig, MsaaWriteback};
     use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -621,15 +662,17 @@ pub fn queue_composite_views(
     use bevy::prelude::Camera2d;
     use bevy::render::batching::gpu_preprocessing::GpuPreprocessingMode;
     use bevy::render::camera::ExtractedCamera;
-    use bevy::render::render_resource::TextureFormat;
     use bevy::render::sync_world::MainEntity;
     use bevy::render::view::{
         ColorGrading, ExtractedView, RenderVisibleEntities, RenderVisibleEntitiesClass,
         RetainedViewEntity,
     };
 
+    let compositing_space = scene_cameras.iter().next().flatten().copied();
+    let rt_format = rt_format(scene_srgb_compositing(compositing_space.as_ref()));
+
     let mut seen: Vec<Entity> = Vec::new();
-    for c in &extracted.0 {
+    for (index, c) in extracted.0.iter().enumerate() {
         if c.rt.is_none() {
             continue;
         }
@@ -658,7 +701,7 @@ pub fn queue_composite_views(
             clip_from_world: None,
             // Must match the RT the composite pass renders into (see `make_rt`),
             // since it feeds the pipeline specialization key.
-            target_format: TextureFormat::Rgba8UnormSrgb,
+            target_format: rt_format,
             viewport: UVec4::new(0, 0, c.rt_side, c.rt_side),
             color_grading: ColorGrading::default(),
             invert_culling: false,
@@ -710,14 +753,20 @@ pub fn queue_composite_views(
                 physical_target_size: Some(UVec2::splat(c.rt_side)),
                 viewport: None,
                 schedule: InxCompositeViewSchedule.intern(),
-                order: 0,
+                // Distinct per view: Bevy warns about ambiguous camera order when two
+                // active cameras share an (order, target) pair, and these all share the
+                // same empty target. The value itself is inert - the schedule they point
+                // at does nothing.
+                order: index as isize,
                 output_mode: CameraOutputMode::Skip,
                 msaa_writeback: MsaaWriteback::Off,
                 clear_color: ClearColorConfig::None,
                 sorted_camera_index_for_target: 0,
                 exposure: 1.0,
                 hdr: false,
-                compositing_space: None,
+                // Children must encode their output exactly like the rest of the
+                // scene: the quad passes the RT through without re-encoding.
+                compositing_space,
             },
             visible,
         ));

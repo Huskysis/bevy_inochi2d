@@ -1,5 +1,9 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
 
+#ifdef SRGB_OUTPUT
+#import bevy_render::color_operations::linear_to_srgb
+#endif
+
 struct PartMaterial {
     tint: vec3<f32>,
     opacity: f32,
@@ -42,6 +46,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         color.rgb + emissive.rgb * emissive.a * material.emissive_strength * material.opacity,
         color.a,
     );
+
+#ifdef SRGB_OUTPUT
+    // Gamma-encoded compositing: the target stores sRGB-encoded values and blending
+    // happens on them, matching how Inochi2D authoring tools composite layers.
+    // Composite RTs are rendered with this same encoding, so a quad sampling one
+    // already holds encoded values and must pass them through untouched.
+    if material.composite == 0u {
+        color = vec4<f32>(linear_to_srgb(color.rgb), color.a);
+    }
+#endif
 
     return color;
 }
