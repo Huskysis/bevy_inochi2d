@@ -20,7 +20,6 @@ use bevy::{
     render::{
         Extract,
         render_asset::RenderAssets,
-        render_graph::{Node, NodeRunError, RenderGraphContext, RenderLabel},
         render_resource::{
             Extent3d, LoadOp, Operations, RenderPassColorAttachment, RenderPassDescriptor,
             StoreOp, TextureDimension, TextureFormat, TextureUsages,
@@ -573,6 +572,15 @@ pub struct CompositeViewOf(pub Entity);
 #[derive(Resource, Default)]
 pub struct CompositeViewEntities(pub HashMap<Entity, Entity>);
 
+/// Empty schedule assigned to every synthetic composite view.
+///
+/// Composite views carry an [`ExtractedCamera`](bevy::render::camera::ExtractedCamera) so
+/// Bevy's Mesh2d specialization treats them as views, which also makes `camera_driver`
+/// pick them up and run their schedule. They are rendered by [`composite_pass`], not by
+/// a camera schedule, so the one they point at does nothing.
+#[derive(bevy::ecs::schedule::ScheduleLabel, Debug, Hash, PartialEq, Eq, Clone)]
+pub struct InxCompositeViewSchedule;
+
 /// ExtractSchedule system (after [`extract_composites`] and after Bevy's `extract_core_2d_camera_phases`, whose retain would drop our phases):
 /// keep one synthetic [`ExtractedView`] per extracted composite, with an
 /// orthographic projection tightly framing the bbox, plus everything Bevy's Mesh2d
@@ -605,13 +613,19 @@ pub fn queue_composite_views(
             bevy::core_pipeline::core_2d::AlphaMask2d,
         >,
     >,
+    mut dirty_specializations: ResMut<bevy::render::camera::DirtySpecializations>,
 ) {
+    use bevy::camera::{CameraOutputMode, ClearColorConfig, MsaaWriteback};
     use bevy::core_pipeline::tonemapping::Tonemapping;
+    use bevy::ecs::schedule::ScheduleLabel;
     use bevy::prelude::Camera2d;
     use bevy::render::batching::gpu_preprocessing::GpuPreprocessingMode;
+    use bevy::render::camera::ExtractedCamera;
+    use bevy::render::render_resource::TextureFormat;
     use bevy::render::sync_world::MainEntity;
     use bevy::render::view::{
-        ColorGrading, ExtractedView, RenderVisibleEntities, RetainedViewEntity,
+        ColorGrading, ExtractedView, RenderVisibleEntities, RenderVisibleEntitiesClass,
+        RetainedViewEntity,
     };
 
     let mut seen: Vec<Entity> = Vec::new();
@@ -642,22 +656,36 @@ pub fn queue_composite_views(
             clip_from_view,
             world_from_view,
             clip_from_world: None,
-            hdr: false,
+            // Must match the RT the composite pass renders into (see `make_rt`),
+            // since it feeds the pipeline specialization key.
+            target_format: TextureFormat::Rgba8UnormSrgb,
             viewport: UVec4::new(0, 0, c.rt_side, c.rt_side),
             color_grading: ColorGrading::default(),
             invert_culling: false,
         };
         // B7: all children, already sorted ascending-Z from extract_composites.
+        // Bevy's specialize/queue walk these incrementally, so the view is marked
+        // dirty below to force a full re-specialize + re-queue every frame.
+        let mut entities: Vec<(Entity, MainEntity)> = c
+            .children
+            .iter()
+            .map(|(render, main)| (*render, MainEntity::from(*main)))
+            .collect();
+        entities.sort_unstable_by_key(|(_, main)| *main);
         let mut visible = RenderVisibleEntities::default();
-        visible.entities.insert(
+        visible.classes.insert(
             std::any::TypeId::of::<bevy::mesh::Mesh2d>(),
-            c.children
-                .iter()
-                .map(|(render, main)| (*render, MainEntity::from(*main)))
-                .collect(),
+            RenderVisibleEntitiesClass {
+                entities_cpu_culling: entities,
+                ..Default::default()
+            },
         );
+        dirty_specializations.views.insert(retained_view_entity);
 
-        transparent_phases.insert_or_clear(retained_view_entity);
+        transparent_phases.prepare_for_new_frame(retained_view_entity);
+        if let Some(phase) = transparent_phases.get_mut(&retained_view_entity) {
+            phase.items.clear();
+        }
         opaque_phases.prepare_for_new_frame(retained_view_entity, GpuPreprocessingMode::None);
         alpha_mask_phases.prepare_for_new_frame(retained_view_entity, GpuPreprocessingMode::None);
 
@@ -672,6 +700,25 @@ pub fn queue_composite_views(
             Msaa::Off,
             Tonemapping::None,
             Camera2d,
+            // `check_views_need_specialization` only builds a view key for views that
+            // carry an `ExtractedCamera`; without a key nothing gets specialized or
+            // queued for this view. No render target and an empty schedule keep
+            // `camera_driver` from drawing it as a camera.
+            ExtractedCamera {
+                target: None,
+                physical_viewport_size: Some(UVec2::splat(c.rt_side)),
+                physical_target_size: Some(UVec2::splat(c.rt_side)),
+                viewport: None,
+                schedule: InxCompositeViewSchedule.intern(),
+                order: 0,
+                output_mode: CameraOutputMode::Skip,
+                msaa_writeback: MsaaWriteback::Off,
+                clear_color: ClearColorConfig::None,
+                sorted_camera_index_for_target: 0,
+                exposure: 1.0,
+                hdr: false,
+                compositing_space: None,
+            },
             visible,
         ));
         seen.push(c.group_entity);
@@ -723,34 +770,29 @@ pub fn prepare_composite_depth_textures(
     }
 }
 
-/// Render-graph label for [`CompositePassNode`], ordered before the main 2D pass so
-/// composite RTs are ready when their quads sample them.
-#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-pub struct InxCompositePassLabel;
-
-/// Render-graph node for the NeedsRt fallback: clears each extracted composite's RT
+/// Render system for the NeedsRt fallback: clears each extracted composite's RT
 /// to transparent black (blend no-op for uncovered texels) and renders the
 /// composite's Transparent2d phase - filled by Bevy's standard queue systems via the
 /// synthetic view - into it (B6).
-#[derive(Default)]
-pub struct CompositePassNode;
-
-impl Node for CompositePassNode {
-    fn run(
-        &self,
-        _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        use bevy::core_pipeline::core_2d::Transparent2d;
-        use bevy::render::render_phase::ViewSortedRenderPhases;
+///
+/// Runs once per frame in the root render schedule, before any camera schedule, so
+/// composite RTs are ready when their quads sample them in the main 2D pass.
+pub fn composite_pass(
+    world: &World,
+    extracted: Res<ExtractedComposites>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+    view_entities: Res<CompositeViewEntities>,
+    transparent_phases: Res<
+        bevy::render::render_phase::ViewSortedRenderPhases<
+            bevy::core_pipeline::core_2d::Transparent2d,
+        >,
+    >,
+    depths: Res<CompositeDepthTextures>,
+    mut render_context: RenderContext,
+) {
+    {
         use bevy::render::view::RetainedViewEntity;
 
-        let extracted = world.resource::<ExtractedComposites>();
-        let gpu_images = world.resource::<RenderAssets<GpuImage>>();
-        let view_entities = world.resource::<CompositeViewEntities>();
-        let transparent_phases = world.resource::<ViewSortedRenderPhases<Transparent2d>>();
-        let depths = world.resource::<CompositeDepthTextures>();
         for composite in &extracted.0 {
             let Some(rt) = &composite.rt else { continue };
             let Some(gpu) = gpu_images.get(rt) else { continue };
@@ -781,6 +823,7 @@ impl Node for CompositePassNode {
                 ),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let retained = RetainedViewEntity::new(composite.group_entity.into(), None, 0);
@@ -796,7 +839,6 @@ impl Node for CompositePassNode {
                 bevy::log::error!("composite pass render error: {err:?}");
             }
         }
-        Ok(())
     }
 }
 
